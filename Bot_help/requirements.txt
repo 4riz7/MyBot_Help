@@ -11,4 +11,3 @@ pypdf
 SpeechRecognition
 pydub
 pyrogram
-tgcrypto

@@ -110,24 +110,52 @@ class UserBotManager:
         )
         
         # Register handlers for this client
-        @client.on_message(py_filters.private & ~py_filters.me)
+        @client.on_message(py_filters.private)
         async def py_on_message(c, message: PyMessage):
-            if message.text:
-                database.cache_message(message.id, message.chat.id, message.from_user.id, message.text)
+            # We cache messages from others AND ourselves to track all deletions if needed
+            # But usually user only wants to see what OTHERS deleted. 
+            # Let's cache everything, but filter in the deletion handler.
+            
+            content = message.text or message.caption
+            if not content:
+                if message.photo: content = "[Фотография]"
+                elif message.video: content = "[Видео]"
+                elif message.voice: content = "[Голосовое сообщение]"
+                elif message.audio: content = "[Аудиозапись]"
+                elif message.document: content = "[Документ/Файл]"
+                elif message.sticker: content = "[Стикер]"
+                else: content = "[Медиа-сообщение]"
+            
+            sender_id = message.from_user.id if message.from_user else 0
+            database.cache_message(message.id, message.chat.id, sender_id, content)
 
         @client.on_deleted_messages(py_filters.private)
         async def py_on_deleted(c, messages):
             for msg in messages:
-                cached = database.get_cached_message(msg.id, msg.chat.id)
+                # In some cases msg.chat might be None in on_deleted_messages
+                chat_id = msg.chat.id if msg.chat else None
+                if not chat_id:
+                    continue # Cannot find in DB without chat_id
+                
+                cached = database.get_cached_message(msg.id, chat_id)
                 if cached:
                     sender_id, text = cached
+                    # Don't notify if the user deleted their own message (unless they want to)
+                    if sender_id == (await c.get_me()).id:
+                        continue
+                        
                     try:
-                        user = await c.get_users(sender_id)
-                        name = f"{user.first_name} {user.last_name or ''}".strip()
+                        name = "Неизвестный"
+                        try:
+                            user = await c.get_users(sender_id)
+                            name = f"{user.first_name} {user.last_name or ''}".strip()
+                        except:
+                            pass # If user is not found or bot is blocked
+                            
                         notification = (
                             f"🗑 **Удалено сообщение!**\n\n"
                             f"👤 **От:** {name} (ID: {sender_id})\n"
-                            f"💬 **Текст:** {text}"
+                            f"💬 **Контент:** {text}"
                         )
                         await bot.send_message(user_id, notification, parse_mode="Markdown")
                     except Exception as e:
