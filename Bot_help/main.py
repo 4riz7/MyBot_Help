@@ -131,17 +131,26 @@ class UserBotManager:
 
         @client.on_deleted_messages(py_filters.private)
         async def py_on_deleted(c, messages):
+            logging.info(f"🗑 Deletion event detected! {len(messages)} messages deleted")
             for msg in messages:
+                logging.info(f"  Checking message ID: {msg.id}")
                 # In some cases msg.chat might be None in on_deleted_messages
                 chat_id = msg.chat.id if msg.chat else None
                 if not chat_id:
+                    logging.warning(f"  ⚠️ No chat_id for message {msg.id}, skipping")
                     continue # Cannot find in DB without chat_id
                 
+                logging.info(f"  Looking in cache: msg_id={msg.id}, chat_id={chat_id}")
                 cached = database.get_cached_message(msg.id, chat_id)
                 if cached:
                     sender_id, text = cached
+                    logging.info(f"  ✅ Found in cache! Sender: {sender_id}, Text: {text[:30]}...")
+                    
                     # Don't notify if the user deleted their own message (unless they want to)
-                    if sender_id == (await c.get_me()).id:
+                    my_id = (await c.get_me()).id
+                    logging.info(f"  My ID: {my_id}, Sender ID: {sender_id}")
+                    if sender_id == my_id:
+                        logging.info(f"  ⏭️ Skipping own message")
                         continue
                         
                     try:
@@ -149,17 +158,21 @@ class UserBotManager:
                         try:
                             user = await c.get_users(sender_id)
                             name = f"{user.first_name} {user.last_name or ''}".strip()
-                        except:
-                            pass # If user is not found or bot is blocked
+                        except Exception as e:
+                            logging.warning(f"  Could not get user info: {e}")
                             
                         notification = (
                             f"🗑 **Удалено сообщение!**\n\n"
                             f"👤 **От:** {name} (ID: {sender_id})\n"
                             f"💬 **Контент:** {text}"
                         )
+                        logging.info(f"  📤 Sending notification to user {user_id}")
                         await bot.send_message(user_id, notification, parse_mode="Markdown")
+                        logging.info(f"  ✅ Notification sent!")
                     except Exception as e:
                         logging.error(f"UserBot {user_id} error: {e}")
+                else:
+                    logging.warning(f"  ❌ Message {msg.id} not found in cache")
 
         try:
             await client.start()
