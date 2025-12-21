@@ -647,25 +647,6 @@ async def process_check_mail(callback: types.CallbackQuery):
         logging.error(f"Mail Check Error: {e}")
         await callback.answer("Ошибка при проверке почты.")
 
-# AI logic (enhanced with notes)
-@dp.message()
-async def chat_with_ai(message: types.Message):
-    if not message.text:
-        return
-
-    await bot.send_chat_action(message.chat.id, "typing")
-    
-    # Get user notes for context
-    notes = database.get_notes(message.from_user.id)
-    notes_context = "\n".join(notes[-10:]) if notes else "Заметок нет."
-    
-    try:
-        prompt = f"Заметки пользователя:\n{notes_context}\n\nВопрос: {message.text}"
-        ai_response = await get_ai_response(prompt)
-        await message.answer(ai_response)
-    except Exception as e:
-        logging.error(f"AI Error: {e}")
-        await message.answer("Прости, мой ИИ-мозг временно недоступен. Попробуй позже!")
 
 # --- UserBot Setup Handlers ---
 
@@ -763,8 +744,29 @@ async def finalize_ub_login(message: types.Message, state: FSMContext, temp_clie
     await message.answer("🎉 **Готово!**\nТеперь я буду присылать уведомления, если кто-то удалит сообщение в вашем ЛС.", parse_mode="Markdown")
     await state.clear()
 
+
 # --- Old single-user code removed ---
 # (Removing the manual userbot initialization and handlers)
+
+# AI logic (enhanced with notes) - MUST BE LAST HANDLER
+@dp.message()
+async def chat_with_ai(message: types.Message):
+    if not message.text:
+        return
+
+    await bot.send_chat_action(message.chat.id, "typing")
+    
+    # Get user notes for context
+    notes = database.get_notes(message.from_user.id)
+    notes_context = "\n".join(notes[-10:]) if notes else "Заметок нет."
+    
+    try:
+        prompt = f"Заметки пользователя:\n{notes_context}\n\nВопрос: {message.text}"
+        ai_response = await get_ai_response(prompt)
+        await message.answer(ai_response)
+    except Exception as e:
+        logging.error(f"AI Error: {e}")
+        await message.answer("Прости, мой ИИ-мозг временно недоступен. Попробуй позже!")
 
 async def main():
     database.init_db()
