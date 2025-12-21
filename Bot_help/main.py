@@ -19,6 +19,9 @@ from pypdf import PdfReader
 import speech_recognition as sr
 from pydub import AudioSegment
 
+from pyrogram import Client, filters as py_filters, enums, errors
+from pyrogram.types import Message as PyMessage
+
 import config
 import database
 
@@ -30,14 +33,120 @@ bot = Bot(token=config.BOT_TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler()
 
-# Initialize AI Client (GigaChat)
+# Initialize UserBot (Pyrogram)
+userbot = Client(
+    "userbot_session",
+    api_id=config.API_ID,
+    api_hash=config.API_HASH,
+    device_model="Antigravity Logger"
+) if config.API_ID and config.API_HASH else None
+
+# Initialize AI Clients
 ai_client = GigaChat(credentials=config.GIGACHAT_CREDENTIALS, verify_ssl_certs=False)
 
-# States for broadcast and reminders
+openai_client = OpenAI(api_key=config.OPENAI_API_KEY) if config.OPENAI_API_KEY else None
+groq_client = Groq(api_key=config.GROQ_API_KEY) if config.GROQ_API_KEY else None
+
+async def get_ai_response(prompt: str):
+    """Universal function to get AI response with fallbacks."""
+    # 1. Try GigaChat (Default)
+    try:
+        response = ai_client.chat(prompt)
+        content = response.choices[0].message.content
+        if "Как и любая языковая модель" not in content and len(content) > 50:
+            return content
+    except Exception as e:
+        logging.error(f"GigaChat Error: {e}")
+
+    # 2. Try Groq (Llama 3) - Fast and reliable
+    if groq_client:
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"Groq Error: {e}")
+
+    # 3. Try OpenAI (GPT-4o-mini)
+    if openai_client:
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"OpenAI Error: {e}")
+
+    return "Прости, мои ИИ-мозги временно перегружены. Попробуй позже!"
+
+# States for broadcast, reminders and UserBot setup
 class Form(StatesGroup):
     waiting_for_broadcast = State()
 
-# Admin check decorator
+class UserBotStates(StatesGroup):
+    waiting_for_phone = State()
+    waiting_for_code = State()
+    waiting_for_password = State()
+
+# --- UserBot Manager ---
+
+class UserBotManager:
+    def __init__(self):
+        self.clients = {} # user_id -> Client
+
+    async def start_client(self, user_id: int, session_string: str):
+        if user_id in self.clients:
+            return
+        
+        client = Client(
+            name=f"session_{user_id}",
+            api_id=config.API_ID,
+            api_hash=config.API_HASH,
+            session_string=session_string,
+            in_memory=True
+        )
+        
+        # Register handlers for this client
+        @client.on_message(py_filters.private & ~py_filters.me)
+        async def py_on_message(c, message: PyMessage):
+            if message.text:
+                database.cache_message(message.id, message.chat.id, message.from_user.id, message.text)
+
+        @client.on_deleted_messages(py_filters.private)
+        async def py_on_deleted(c, messages):
+            for msg in messages:
+                cached = database.get_cached_message(msg.id, msg.chat.id)
+                if cached:
+                    sender_id, text = cached
+                    try:
+                        user = await c.get_users(sender_id)
+                        name = f"{user.first_name} {user.last_name or ''}".strip()
+                        notification = (
+                            f"🗑 **Удалено сообщение!**\n\n"
+                            f"👤 **От:** {name} (ID: {sender_id})\n"
+                            f"💬 **Текст:** {text}"
+                        )
+                        await bot.send_message(user_id, notification, parse_mode="Markdown")
+                    except Exception as e:
+                        logging.error(f"UserBot {user_id} error: {e}")
+
+        try:
+            await client.start()
+            self.clients[user_id] = client
+            logging.info(f"UserBot for user {user_id} started.")
+        except Exception as e:
+            logging.error(f"Failed to start UserBot for {user_id}: {e}")
+            database.delete_user_session(user_id)
+
+    async def stop_client(self, user_id: int):
+        client = self.clients.pop(user_id, None)
+        if client:
+            await client.stop()
+
+ub_manager = UserBotManager()
 def admin_only(func):
     async def wrapper(message: types.Message, *args, **kwargs):
         if message.from_user.id != config.ADMIN_ID:
@@ -51,8 +160,8 @@ def get_main_menu():
     buttons = [
         [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="💎 Привычки")],
         [KeyboardButton(text="📊 Финансы"), KeyboardButton(text="📝 Заметка")],
-        [KeyboardButton(text="📧 Почта"), KeyboardButton(text="⏰ Напомнить")],
-        [KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="📧 Почта"), KeyboardButton(text="🕵️ UserBot")],
+        [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="❓ Помощь")]
     ]
     return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -332,16 +441,33 @@ async def summarize_link(message: types.Message):
     url = message.text
     await message.answer("⏳ Читаю статью и готовлю краткий пересказ...")
     
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, timeout=10.0)
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+            r = await client.get(url, timeout=15.0)
             soup = BeautifulSoup(r.text, 'html.parser')
-            # Extract text from p tags
-            text = " ".join([p.get_text() for p in soup.find_all('p')])[:4000]
+            # Filter out scripts, styles, and small navigation texts
+            for script_or_style in soup(["script", "style", "nav", "footer", "header"]):
+                script_or_style.decompose()
+                
+            paragraphs = [p.get_text().strip() for p in soup.find_all(['p', 'h1', 'h2'])]
+            text = " ".join([p for p in paragraphs if len(p) > 20])[:6000]
             
-        prompt = f"Сделай краткий и качественный пересказ этой статьи на русском языке:\n\n{text}"
-        response = ai_client.chat(prompt)
-        await message.answer(f"📝 **Краткое содержание:**\n\n{response.choices[0].message.content}", parse_mode="Markdown")
+        if not text:
+            await message.answer("❌ Не удалось извлечь текст из статьи. Попробуй другую ссылку.")
+            return
+
+        prompt = (
+            "Твоя задача — сделать качественный и объективный пересказ статьи на русском языке. "
+            "Избегай общих фраз и дисклеймеров. Пиши сразу по существу.\n\n"
+            f"Текст статьи:\n{text}"
+        )
+        
+        summary = await get_ai_response(prompt)
+        await message.answer(f"📝 **Краткое содержание:**\n\n{summary}", parse_mode="Markdown")
     except Exception as e:
         logging.error(f"Summarize Error: {e}")
         await message.answer("❌ Не удалось прочитать статью. Возможно, доступ заблокирован.")
@@ -365,9 +491,9 @@ async def summarize_pdf(message: types.Message):
             text += page.extract_text() + " "
         text = text[:4000]
         
-        prompt = f"Сделай краткий пересказ этого документа:\n\n{text}"
-        response = ai_client.chat(prompt)
-        await message.answer(f"📄 **Суть документа:**\n\n{response.choices[0].message.content}", parse_mode="Markdown")
+        prompt = f"Сделай краткий пересказ этого документа (самая суть):\n\n{text}"
+        summary = await get_ai_response(prompt)
+        await message.answer(f"📄 **Суть документа:**\n\n{summary}", parse_mode="Markdown")
         os.remove(file_path)
     except Exception as e:
         logging.error(f"PDF Error: {e}")
@@ -400,8 +526,7 @@ async def handle_voice(message: types.Message):
         await message.answer(f"🗣 **Я услышал:**\n_{text}_\n\n(Передаю этот запрос нейросети...)", parse_mode="Markdown")
         
         # Pass recognized text to AI
-        response = ai_client.chat(text)
-        await message.answer(response.choices[0].message.content)
+        await message.answer(await get_ai_response(text))
         
         os.remove(ogg_path)
         os.remove(wav_path)
@@ -507,21 +632,126 @@ async def chat_with_ai(message: types.Message):
     notes_context = "\n".join(notes[-10:]) if notes else "Заметок нет."
     
     try:
-        # GigaChat uses synchronous calls but can be used in async loop
-        response = ai_client.chat(f"Заметки пользователя:\n{notes_context}\n\nВопрос: {message.text}")
-        ai_response = response.choices[0].message.content
+        prompt = f"Заметки пользователя:\n{notes_context}\n\nВопрос: {message.text}"
+        ai_response = await get_ai_response(prompt)
         await message.answer(ai_response)
     except Exception as e:
-        logging.error(f"AI Error (GigaChat): {e}")
-        await message.answer("Прости, мой ИИ-мозг (GigaChat) временно недоступен. Попробуй позже!")
+        logging.error(f"AI Error: {e}")
+        await message.answer("Прости, мой ИИ-мозг временно недоступен. Попробуй позже!")
+
+# --- UserBot Setup Handlers ---
+
+@dp.message(F.text == "🕵️ UserBot")
+@dp.message(Command("userbot"))
+async def cmd_userbot(message: types.Message, state: FSMContext):
+    session = database.get_user_session(message.from_user.id)
+    if session:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔴 Отключить", callback_data="ub_stop")]])
+        await message.answer("✅ У вас уже подключен UserBot для отслеживания удаленных сообщений.", reply_markup=kb)
+        return
+
+    await message.answer(
+        "🕵️ **Настройка UserBot**\n\n"
+        "Эта функция позволит мне видеть удаленные сообщения в ваших личных диалогах.\n"
+        "Для этого мне нужно временно авторизоваться под вашим аккаунтом.\n\n"
+        "Введите ваш номер телефона в международном формате (например: `+79991234567`):",
+        parse_mode="Markdown"
+    )
+    await state.set_state(UserBotStates.waiting_for_phone)
+
+@dp.callback_query(F.data == "ub_stop")
+async def process_ub_stop(callback: types.CallbackQuery):
+    await ub_manager.stop_client(callback.from_user.id)
+    database.delete_user_session(callback.from_user.id)
+    await callback.message.edit_text("🔴 UserBot отключен. Данные сессии удалены.")
+    await callback.answer()
+
+@dp.message(UserBotStates.waiting_for_phone)
+async def process_phone(message: types.Message, state: FSMContext):
+    phone = message.text.strip().replace(" ", "")
+    if not phone.startswith("+"):
+        await message.answer("Пожалуйста, введите номер, начиная с +")
+        return
+
+    temp_client = Client(
+        name=f"temp_{message.from_user.id}",
+        api_id=config.API_ID,
+        api_hash=config.API_HASH,
+        in_memory=True
+    )
+    await temp_client.connect()
+    try:
+        code_info = await temp_client.send_code(phone)
+        await state.update_data(phone=phone, phone_code_hash=code_info.phone_code_hash, temp_client=temp_client)
+        await message.answer("📲 Код подтверждения отправлен в ваш Telegram. Введите его:")
+        await state.set_state(UserBotStates.waiting_for_code)
+    except Exception as e:
+        logging.error(f"Send code error: {e}")
+        await message.answer(f"❌ Ошибка: {e}. Попробуйте позже.")
+        await temp_client.disconnect()
+        await state.clear()
+
+@dp.message(UserBotStates.waiting_for_code)
+async def process_code(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    temp_client = data['temp_client']
+    code = message.text.strip()
+
+    try:
+        await temp_client.sign_in(data['phone'], data['phone_code_hash'], code)
+    except errors.SessionPasswordNeeded:
+        await message.answer("🔐 У вас включена двухфакторная аутентификация. Введите ваш пароль:")
+        await state.set_state(UserBotStates.waiting_for_password)
+        return
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+        await temp_client.disconnect()
+        await state.clear()
+        return
+
+    await finalize_ub_login(message, state, temp_client)
+
+@dp.message(UserBotStates.waiting_for_password)
+async def process_password(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    temp_client = data['temp_client']
+    password = message.text.strip()
+
+    try:
+        await temp_client.check_password(password)
+    except Exception as e:
+        await message.answer(f"❌ Неверный пароль или ошибка: {e}")
+        return
+
+    await finalize_ub_login(message, state, temp_client)
+
+async def finalize_ub_login(message: types.Message, state: FSMContext, temp_client: Client):
+    session_string = await temp_client.export_session_string()
+    database.save_user_session(message.from_user.id, session_string)
+    
+    await ub_manager.start_client(message.from_user.id, session_string)
+    await temp_client.disconnect()
+    
+    await message.answer("🎉 **Готово!**\nТеперь я буду присылать уведомления, если кто-то удалит сообщение в вашем ЛС.", parse_mode="Markdown")
+    await state.clear()
+
+# --- Old single-user code removed ---
+# (Removing the manual userbot initialization and handlers)
 
 async def main():
     database.init_db()
     
-    # Schedule morning brief at 08:00
+    # Schedule jobs
     scheduler.add_job(send_morning_brief, 'cron', hour=8, minute=0)
+    scheduler.add_job(database.cleanup_old_messages, 'cron', hour=4, minute=0)
     scheduler.start()
     
+    # Start saved user sessions
+    sessions = database.get_all_sessions()
+    for user_id, session_str in sessions:
+        await ub_manager.start_client(user_id, session_str)
+    
+    logging.info("Starting Aiogram Bot...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

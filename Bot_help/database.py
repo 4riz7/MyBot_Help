@@ -59,6 +59,22 @@ def init_db():
             email TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS message_cache (
+            message_id INTEGER,
+            chat_id INTEGER,
+            user_id INTEGER,
+            text TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (message_id, chat_id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            user_id INTEGER PRIMARY KEY,
+            session_string TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -177,3 +193,58 @@ def get_temp_email(user_id: int):
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else None
+
+# Message Cache Functions (for UserBot)
+def cache_message(message_id: int, chat_id: int, user_id: int, text: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO message_cache (message_id, chat_id, user_id, text) VALUES (?, ?, ?, ?)", 
+                   (message_id, chat_id, user_id, text))
+    conn.commit()
+    conn.close()
+
+def get_cached_message(message_id: int, chat_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, text FROM message_cache WHERE message_id = ? AND chat_id = ?", (message_id, chat_id))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def cleanup_old_messages(days: int = 1):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM message_cache WHERE timestamp < datetime('now', '-' || ? || ' days')", (days,))
+    conn.commit()
+    conn.close()
+
+# User Session Functions
+def save_user_session(user_id: int, session_string: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, session_string) VALUES (?, ?)", (user_id, session_string))
+    conn.commit()
+    conn.close()
+
+def get_user_session(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT session_string FROM user_sessions WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_all_sessions():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, session_string FROM user_sessions")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def delete_user_session(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
