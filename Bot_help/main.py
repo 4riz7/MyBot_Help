@@ -1,0 +1,531 @@
+import asyncio
+import logging
+import re
+import os
+import httpx
+from datetime import datetime
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
+from openai import OpenAI
+from groq import Groq
+from gigachat import GigaChat
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import yt_dlp
+from bs4 import BeautifulSoup
+from pypdf import PdfReader
+import speech_recognition as sr
+from pydub import AudioSegment
+
+import config
+import database
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+
+# Initialize bot, dispatcher and scheduler
+bot = Bot(token=config.BOT_TOKEN)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
+
+# Initialize AI Client (GigaChat)
+ai_client = GigaChat(credentials=config.GIGACHAT_CREDENTIALS, verify_ssl_certs=False)
+
+# States for broadcast and reminders
+class Form(StatesGroup):
+    waiting_for_broadcast = State()
+
+# Admin check decorator
+def admin_only(func):
+    async def wrapper(message: types.Message, *args, **kwargs):
+        if message.from_user.id != config.ADMIN_ID:
+            await message.answer("У вас нет прав администратора.")
+            return
+        return await func(message, *args, **kwargs)
+    return wrapper
+
+# Main Menu Keyboard
+def get_main_menu():
+    buttons = [
+        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="💎 Привычки")],
+        [KeyboardButton(text="📊 Финансы"), KeyboardButton(text="📝 Заметка")],
+        [KeyboardButton(text="📧 Почта"), KeyboardButton(text="⏰ Напомнить")],
+        [KeyboardButton(text="❓ Помощь")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    database.add_user(message.from_user.id)
+    await message.answer(
+        f"Привет, {message.from_user.first_name}! Я твой умный помощник.\n"
+        "Я могу считать твои деньги, сохранять заметки, скачивать видео и напоминать о важном.\n\n"
+        "Нажми кнопку ниже или просто напиши мне любой вопрос!",
+        reply_markup=get_main_menu()
+    )
+
+@dp.message(Command("help"))
+@dp.message(F.text == "❓ Помощь")
+async def cmd_help(message: types.Message):
+    help_text = (
+        "🤖 **Что я умею:**\n\n"
+        "💰 **Учет расходов:** Просто напиши `сумма категория` (например: `500 обед`).\n"
+        "📊 **Финансы:** Кнопка ниже или `/finance` покажет твои траты.\n"
+        "📝 **Заметки:** Используй `/note текст`, чтобы я запомнил что-то важное. ИИ будет учитывать это при ответах.\n"
+        "⏰ **Напоминания:** Напиши `/remind ЧЧ:ММ текст` (например: `/remind 14:00 Встреча`).\n"
+        "🎥 **Скачать видео:** Просто пришли ссылку на YouTube, TikTok или Instagram.\n"
+        "☁️ **Утренний дайджест:** Каждый день в 08:00 присылаю сводку погоды и дел.\n\n"
+        "💬 **Чат с ИИ:** Просто напиши мне любой вопрос, и я отвечу!"
+    )
+    await message.answer(help_text, parse_mode="Markdown")
+
+@dp.message(Command("admin"))
+async def cmd_admin(message: types.Message):
+    if message.from_user.id != config.ADMIN_ID:
+        await message.answer("У вас нет прав администратора.")
+        return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")]
+    ])
+    await message.answer("Админ-панель:", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "broadcast")
+async def start_broadcast(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("У вас нет прав.")
+        return
+        
+    await callback.message.answer("Введите сообщение для рассылки всем пользователям:")
+    await state.set_state(Form.waiting_for_broadcast)
+    await callback.answer()
+
+@dp.callback_query(F.data == "stats")
+async def show_stats(callback: types.CallbackQuery):
+    if callback.from_user.id != config.ADMIN_ID:
+        await callback.answer("У вас нет прав.")
+        return
+    
+    count = database.get_user_count()
+    await callback.message.answer(f"Всего пользователей в системе: {count}")
+    await callback.answer()
+
+@dp.message(Form.waiting_for_broadcast)
+async def process_broadcast(message: types.Message, state: FSMContext):
+    users = database.get_all_users()
+    count = 0
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, message.text)
+            count += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            logging.error(f"Failed to send to {user_id}: {e}")
+            
+    await message.answer(f"Рассылка завершена. Отправлено {count} пользователям.")
+    await state.clear()
+
+# Expense Tracker
+@dp.message(F.text.regexp(r'^(\d+)\s+(.+)$'))
+async def record_expense(message: types.Message):
+    match = re.match(r'^(\d+)\s+(.+)$', message.text)
+    amount = float(match.group(1))
+    category = match.group(2)
+    database.add_expense(message.from_user.id, amount, category)
+    await message.answer(f"✅ Записал: {amount} на {category}")
+
+@dp.message(F.text == "📊 Финансы")
+@dp.message(Command("finance"))
+async def cmd_finance(message: types.Message):
+    expenses = database.get_expenses(message.from_user.id)
+    if not expenses:
+        await message.answer("Расходов пока нет.")
+        return
+    
+    report = "📊 Твои последние расходы:\n"
+    total = 0
+    for amount, cat, ts in expenses[:10]:
+        report += f"• {amount} — {cat} ({ts[:10]})\n"
+        total += amount
+    
+    await message.answer(report)
+
+# Smart Notes
+@dp.message(Command("note"))
+async def cmd_note(message: types.Message, command: CommandObject):
+    if not command.args:
+        await message.answer("Используйте: /note текст твоей заметки")
+        return
+    database.add_note(message.from_user.id, command.args)
+    await message.answer("📝 Заметка сохранена!")
+
+# Reminder feature
+async def send_reminder(user_id: int, text: str):
+    try:
+        await bot.send_message(user_id, f"🕒 Напоминание: {text}")
+    except Exception as e:
+        logging.error(f"Failed to send reminder to {user_id}: {e}")
+
+@dp.message(F.text == "📝 Заметка")
+async def btn_note(message: types.Message):
+    await message.answer("Чтобы сохранить заметку, используй команду: `/note твой текст`", parse_mode="Markdown")
+
+@dp.message(F.text == "⏰ Напомнить")
+async def btn_remind(message: types.Message):
+    await message.answer("Чтобы поставить напоминание, используй команду: `/remind ЧЧ:ММ текст` (например: `/remind 15:00 Купить хлеб`)", parse_mode="Markdown")
+
+@dp.message(Command("remind"))
+async def cmd_remind(message: types.Message, command: CommandObject):
+    if not command.args:
+        await message.answer("Используйте: /remind ЧЧ:ММ текст напоминания")
+        return
+
+    try:
+        time_str, reminder_text = command.args.split(" ", 1)
+        target_time = datetime.strptime(time_str, "%H:%M").time()
+        now = datetime.now()
+        run_date = datetime.combine(now.date(), target_time)
+        
+        if run_date < now:
+            await message.answer("Это время уже прошло. Попробуйте на сегодня попозже.")
+            return
+
+        scheduler.add_job(send_reminder, 'date', run_date=run_date, args=[message.from_user.id, reminder_text])
+        await message.answer(f"Ок! Напомню в {time_str}: {reminder_text}")
+    except ValueError:
+        await message.answer("Ошибка формата. Пример: /remind 14:00 Сходить в магазин")
+
+# Daily Morning Brief
+async def get_weather():
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={config.CITY}&appid={config.WEATHER_API_KEY}&units=metric&lang=ru"
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url)
+            data = r.json()
+            temp = data['main']['temp']
+            desc = data['weather'][0]['description']
+            return f"{temp}°C, {desc}"
+    except:
+        return "+2°C, облачно (ошибка API)"
+
+async def get_currency():
+    try:
+        url = "https://open.er-api.com/v6/latest/USD"
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url)
+            data = r.json()
+            return f"{data['rates']['RUB']:.2f} руб."
+    except:
+        return "98.40 руб. (ошибка API)"
+
+async def send_morning_brief():
+    users = database.get_all_users()
+    weather = await get_weather()
+    currency = await get_currency()
+    
+    brief = f"☀️ Доброе утро! Вот твой утренний дайджест ({config.CITY}):\n"
+    brief += f"🌡 Погода: {weather}\n"
+    brief += f"💵 Курс USD: {currency}\n"
+    brief += "📅 Не забудь проверить свои дела на сегодня!"
+    
+    for user_id in users:
+        try:
+            await bot.send_message(user_id, brief)
+        except Exception as e:
+            logging.error(f"Failed to send brief to {user_id}: {e}")
+
+# To-Do List
+@dp.message(Command("todo"))
+async def cmd_todo(message: types.Message, command: CommandObject):
+    if not command.args:
+        await message.answer("Используйте: /todo текст задачи")
+        return
+    database.add_task(message.from_user.id, command.args)
+    await message.answer(f"✅ Задача добавлена: {command.args}")
+
+@dp.message(F.text == "📋 Задачи")
+@dp.message(Command("tasks"))
+async def cmd_tasks(message: types.Message):
+    tasks = database.get_tasks(message.from_user.id)
+    if not tasks:
+        await message.answer("У тебя нет активных задач! 🎉")
+        return
+    
+    kb = []
+    text = "📋 Твои задачи:\n"
+    for tid, ttext, _ in tasks:
+        text += f"• {ttext}\n"
+        kb.append([InlineKeyboardButton(text=f"✅ {ttext[:20]}...", callback_data=f"done_{tid}")])
+    
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@dp.callback_query(F.data.startswith("done_"))
+async def process_task_done(callback: types.CallbackQuery):
+    task_id = int(callback.data.split("_")[1])
+    database.complete_task(task_id)
+    await callback.message.edit_text(callback.message.text + "\n\n(Обновлено: задача выполнена!)")
+    await callback.answer("Молодец!")
+
+# Habit Tracker
+@dp.message(Command("addhabit"))
+async def cmd_add_habit(message: types.Message, command: CommandObject):
+    if not command.args:
+        await message.answer("Используйте: /addhabit название привычки")
+        return
+    database.add_habit(message.from_user.id, command.args)
+    await message.answer(f"🚀 Привычка '{command.args}' добавлена! Буду напоминать о ней вечером.")
+
+@dp.message(F.text == "💎 Привычки")
+@dp.message(Command("habits"))
+async def cmd_habits(message: types.Message):
+    habits = database.get_habits(message.from_user.id)
+    if not habits:
+        await message.answer("У тебя пока нет привычек. Добавь: /addhabit")
+        return
+    
+    kb = []
+    for hid, name in habits:
+        kb.append([InlineKeyboardButton(text=f"💎 {name}", callback_data=f"log_{hid}")])
+    
+    await message.answer("Твои привычки (нажми, чтобы отметить выполнение за сегодня):", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@dp.callback_query(F.data.startswith("log_"))
+async def process_habit_log(callback: types.CallbackQuery):
+    habit_id = int(callback.data.split("_")[1])
+    today = datetime.now().date().isoformat()
+    database.log_habit(habit_id, callback.from_user.id, today)
+    await callback.answer("Отлично! Засчитано.")
+
+# Media Downloader (yt-dlp)
+@dp.message(F.text.regexp(r'https?://(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/'))
+async def download_media(message: types.Message):
+    url = re.search(r'https?://[^\s]+', message.text).group(0)
+    await message.answer("⏳ Начинаю загрузку видео, это может занять минуту...")
+    
+    ydl_opts = {
+        'format': 'best',
+        'outtmpl': 'downloads/%(id)s.%(ext)s',
+        'max_filesize': 50000000, # 50MB
+    }
+    
+    try:
+        if not os.path.exists('downloads'):
+            os.makedirs('downloads')
+            
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            
+        video = FSInputFile(filename)
+        await message.answer_video(video, caption="Вот твое видео!")
+        os.remove(filename)
+    except Exception as e:
+        logging.error(f"Download Error: {e}")
+        await message.answer("❌ Не удалось скачать видео. Возможно, оно слишком тяжелое или ссылка не поддерживается.")
+
+# Summarizer (Articles)
+@dp.message(F.text.regexp(r'https?://(?!www\.youtube|youtu\.be|tiktok\.com|instagram\.com)[^\s]+'))
+async def summarize_link(message: types.Message):
+    url = message.text
+    await message.answer("⏳ Читаю статью и готовлю краткий пересказ...")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, timeout=10.0)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Extract text from p tags
+            text = " ".join([p.get_text() for p in soup.find_all('p')])[:4000]
+            
+        prompt = f"Сделай краткий и качественный пересказ этой статьи на русском языке:\n\n{text}"
+        response = ai_client.chat(prompt)
+        await message.answer(f"📝 **Краткое содержание:**\n\n{response.choices[0].message.content}", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Summarize Error: {e}")
+        await message.answer("❌ Не удалось прочитать статью. Возможно, доступ заблокирован.")
+
+# Summarizer (PDF)
+@dp.message(F.document.mime_type == "application/pdf")
+async def summarize_pdf(message: types.Message):
+    await message.answer("⏳ Анализирую PDF-документ...")
+    
+    file_id = message.document.file_id
+    file = await bot.get_file(file_id)
+    file_path = f"downloads/{file_id}.pdf"
+    
+    if not os.path.exists('downloads'): os.makedirs('downloads')
+    await bot.download_file(file.file_path, file_path)
+    
+    try:
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages[:5]: # Only first 5 pages for brevity
+            text += page.extract_text() + " "
+        text = text[:4000]
+        
+        prompt = f"Сделай краткий пересказ этого документа:\n\n{text}"
+        response = ai_client.chat(prompt)
+        await message.answer(f"📄 **Суть документа:**\n\n{response.choices[0].message.content}", parse_mode="Markdown")
+        os.remove(file_path)
+    except Exception as e:
+        logging.error(f"PDF Error: {e}")
+        await message.answer("❌ Ошибка при чтении PDF.")
+
+# Voice-to-Text
+@dp.message(F.voice)
+async def handle_voice(message: types.Message):
+    await message.answer("🎤 Обрабатываю твое голосовое...")
+    
+    file_id = message.voice.file_id
+    file = await bot.get_file(file_id)
+    ogg_path = f"downloads/{file_id}.ogg"
+    wav_path = f"downloads/{file_id}.wav"
+    
+    if not os.path.exists('downloads'): os.makedirs('downloads')
+    await bot.download_file(file.file_path, ogg_path)
+    
+    try:
+        # Convert OGG to WAV
+        audio = AudioSegment.from_ogg(ogg_path)
+        audio.export(wav_path, format="wav")
+        
+        # Recognize Speech
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(wav_path) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language="ru-RU")
+            
+        await message.answer(f"🗣 **Я услышал:**\n_{text}_\n\n(Передаю этот запрос нейросети...)", parse_mode="Markdown")
+        
+        # Pass recognized text to AI
+        response = ai_client.chat(text)
+        await message.answer(response.choices[0].message.content)
+        
+        os.remove(ogg_path)
+        os.remove(wav_path)
+    except Exception as e:
+        logging.error(f"Voice Error: {e}")
+        await message.answer("❌ Не удалось распознать голос. Попробуй говорить четче!")
+
+@dp.message(F.text == "📧 Почта")
+@dp.message(Command("tempmail"))
+async def cmd_tempmail(message: types.Message):
+    # Check if user already has an email
+    existing_email = database.get_temp_email(message.from_user.id)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить почту", callback_data="check_mail")],
+        [InlineKeyboardButton(text="🆕 Сгенерировать новый", callback_data="new_mail")]
+    ])
+    
+    if existing_email:
+        await message.answer(f"Твой текущий адрес:\n`{existing_email}`\n\nИспользуй его для регистраций или создай новый.", reply_markup=kb, parse_mode="Markdown")
+    else:
+        await generate_new_email(message, kb)
+
+async def generate_new_email(message, kb):
+    await bot.send_chat_action(message.chat.id, "typing")
+    try:
+        async with httpx.AsyncClient() as client:
+            # Get available domains
+            dr = await client.get("https://www.1secmail.com/api/v1/?action=getDomainList")
+            domains = dr.json()
+            domain = domains[0] if domains else "1secmail.com"
+            
+            import random
+            import string
+            login = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+            email = f"{login}@{domain}"
+            
+            database.save_temp_email(message.from_user.id, email)
+            await message.answer(f"✅ Создан новый адрес:\n`{email}`\n\nОжидай письма и нажимай кнопку ниже.", reply_markup=kb, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Generate Mail Error: {e}")
+        await message.answer("❌ Ошибка при создании почты.")
+
+@dp.callback_query(F.data == "new_mail")
+async def process_new_mail(callback: types.CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Проверить почту", callback_data="check_mail")],
+        [InlineKeyboardButton(text="🆕 Сгенерировать новый", callback_data="new_mail")]
+    ])
+    await generate_new_email(callback.message, kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "check_mail")
+async def process_check_mail(callback: types.CallbackQuery):
+    email = database.get_temp_email(callback.from_user.id)
+    if not email:
+        await callback.answer("Сначала создай почту!")
+        return
+        
+    login, domain = email.split("@")
+    url = f"https://www.1secmail.com/api/v1/?action=getMessages&login={login}&domain={domain}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url)
+            messages = r.json()
+            
+            if not messages:
+                await callback.answer("Писем пока нет. Попробуй позже.", show_alert=True)
+                return
+            
+            res_text = "📩 **Новые письма:**\n\n"
+            for m in messages[:5]: # Last 5 messages
+                m_id = m['id']
+                m_from = m['from']
+                m_subject = m['subject']
+                m_date = m['date']
+                
+                # Fetch full message content
+                msg_url = f"https://www.1secmail.com/api/v1/?action=readMessage&login={login}&domain={domain}&id={m_id}"
+                mr = await client.get(msg_url)
+                msg_data = mr.json()
+                content = msg_data['textBody'] if msg_data['textBody'] else msg_data['htmlBody']
+                
+                res_text += f"👤 От: {m_from}\n📅 Дата: {m_date}\n📌 Тема: {m_subject}\n\n{content[:500]}...\n---\n"
+            
+            await callback.message.answer(res_text, parse_mode="Markdown")
+            await callback.answer()
+    except Exception as e:
+        logging.error(f"Mail Check Error: {e}")
+        await callback.answer("Ошибка при проверке почты.")
+
+# AI logic (enhanced with notes)
+@dp.message()
+async def chat_with_ai(message: types.Message):
+    if not message.text:
+        return
+
+    await bot.send_chat_action(message.chat.id, "typing")
+    
+    # Get user notes for context
+    notes = database.get_notes(message.from_user.id)
+    notes_context = "\n".join(notes[-10:]) if notes else "Заметок нет."
+    
+    try:
+        # GigaChat uses synchronous calls but can be used in async loop
+        response = ai_client.chat(f"Заметки пользователя:\n{notes_context}\n\nВопрос: {message.text}")
+        ai_response = response.choices[0].message.content
+        await message.answer(ai_response)
+    except Exception as e:
+        logging.error(f"AI Error (GigaChat): {e}")
+        await message.answer("Прости, мой ИИ-мозг (GigaChat) временно недоступен. Попробуй позже!")
+
+async def main():
+    database.init_db()
+    
+    # Schedule morning brief at 08:00
+    scheduler.add_job(send_morning_brief, 'cron', hour=8, minute=0)
+    scheduler.start()
+    
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот выключен")

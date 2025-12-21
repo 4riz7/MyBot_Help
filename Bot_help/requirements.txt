@@ -1,0 +1,12 @@
+aiogram
+python-dotenv
+openai
+apscheduler
+httpx
+yt_dlp
+groq
+gigachat
+beautifulsoup4
+pypdf
+SpeechRecognition
+pydub
