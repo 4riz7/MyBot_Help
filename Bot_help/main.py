@@ -1,38 +1,31 @@
 import asyncio
-print("DEBUG: 1 - asyncio imported")
 import logging
-print("DEBUG: 2 - logging imported")
 import re
 import os
 import httpx
 import json
-print("DEBUG: 3 - std libs imported")
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
-print("DEBUG: 4 - aiogram imported")
 from aiogram.filters import Command, CommandObject, ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton, ChatMemberUpdated, WebAppInfo
-print("DEBUG: 5 - aiogram types imported")
 from openai import OpenAI
 from groq import Groq
 from gigachat import GigaChat
-print("DEBUG: 6 - AI libs imported")
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import yt_dlp
-print("DEBUG: 7 - yt_dlp imported")
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 import speech_recognition as sr
-try:
-    import matplotlib.pyplot as plt
-    import io
-    CHARTS_AVAILABLE = True
-except ImportError:
-    CHARTS_AVAILABLE = False
-    logging.warning("Matplotlib not found. Charts will be disabled.")
-print("DEBUG: 8 - matplotlib handled")
+
+# Matplotlib causes hard crash on this environment, disabled hard.
+# try:
+#     import matplotlib.pyplot as plt
+#     import io
+#     CHARTS_AVAILABLE = True
+# except ImportError:
+CHARTS_AVAILABLE = False
     
 try:
     from pydub import AudioSegment
@@ -40,10 +33,8 @@ try:
 except ImportError:
     VOICE_AVAILABLE = False
     logging.warning("Pydub not found. Voice features disabled.")
-print("DEBUG: 9 - pydub handled")
 
 from pyrogram import Client, filters as py_filters, enums, errors
-print("DEBUG: 10 - pyrogram imported")
 from pyrogram.types import Message as PyMessage
 
 import config
@@ -1002,7 +993,6 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    print("DEBUG: Starting main loop...")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
