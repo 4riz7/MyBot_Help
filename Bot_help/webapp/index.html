@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Icons -->
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- HEADER -->
+        <div class="header">
+            <h1 id="page-title">Финансы</h1>
+        </div>
+
+        <!-- CONTENT SECTIONS -->
+        <div id="content">
+
+            <!-- FINANCE SECTION -->
+            <div id="tab-finance" class="tab-content active">
+                <div class="card">
+                    <div class="input-group">
+                        <label>Сумма (₽)</label>
+                        <input type="number" id="amountInput" placeholder="0" inputmode="numeric">
+                    </div>
+
+                    <div class="tags-container">
+                        <div class="tag" onclick="selectCategory(this, 'Еда')">🍔 Еда</div>
+                        <div class="tag" onclick="selectCategory(this, 'Такси')">🚖 Такси</div>
+                        <div class="tag" onclick="selectCategory(this, 'Дом')">🏠 Дом</div>
+                        <div class="tag" onclick="selectCategory(this, 'Развлечения')">🎬 Развлечения</div>
+                        <div class="tag" onclick="selectCategory(this, 'Другое')">🛍 Другое</div>
+                        <div class="tag" id="add-cat-btn" onclick="toggleCustomCategory()">➕</div>
+                    </div>
+
+                    <div id="custom-cat-group" class="input-group" style="display: none;">
+                        <label>Своя категория</label>
+                        <input type="text" id="customCategoryInput" placeholder="Название категории">
+                    </div>
+
+                    <input type="hidden" id="categoryInput">
+                    <button class="btn-main" onclick="sendExpense()">Добавить расход</button>
+                    <button class="btn-sec" style="margin-top:10px;" onclick="sendAction('get_stats')">📊 Моя
+                        статистика</button>
+                </div>
+            </div>
+
+            <!-- TASKS SECTION -->
+            <div id="tab-tasks" class="tab-content">
+                <div class="card">
+                    <div class="input-group">
+                        <label>Новая задача</label>
+                        <input type="text" id="taskInput" placeholder="Что нужно сделать?">
+                    </div>
+                    <button class="btn-main" onclick="sendTask()">Создать задачу</button>
+                </div>
+
+                <div class="info-box">
+                    <i class='bx bx-info-circle'></i>
+                    <p>Список текущих задач можно посмотреть в чате командой /tasks</p>
+                </div>
+            </div>
+
+            <!-- HABITS SECTION -->
+            <div id="tab-habits" class="tab-content">
+                <div class="card">
+                    <div class="input-group">
+                        <label>Новая привычка</label>
+                        <input type="text" id="habitInput" placeholder="Например: Чтение 20 мин">
+                    </div>
+                    <div class="input-group">
+                        <label>🕒 Время напоминания (необязательно)</label>
+                        <input type="time" id="habitTimeInput">
+                    </div>
+                    <button class="btn-main" onclick="sendHabit()">Трекать привычку</button>
+                </div>
+            </div>
+
+            <!-- SETTINGS SECTION -->
+            <div id="tab-settings" class="tab-content">
+                <div class="card">
+                    <div class="input-group">
+                        <label>Твой город</label>
+                        <input type="text" id="cityInput" placeholder="Например: Москва">
+                    </div>
+                    <button class="btn-sec" onclick="saveCity()">Сохранить город</button>
+                </div>
+
+                <div class="card">
+                    <label style="margin-bottom:10px; display:block;">UserBot</label>
+                    <button class="btn-danger" onclick="sendAction('stop_userbot')">🛑 Остановить UserBot</button>
+                    <p class="hint">Настройка подключения происходит через чат.</p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- BOTTOM NAVIGATION -->
+        <div class="bottom-nav">
+            <div class="nav-item active" onclick="switchTab('finance', 'Финансы')">
+                <i class='bx bx-ruble'></i>
+                <span>Финансы</span>
+            </div>
+            <div class="nav-item" onclick="switchTab('tasks', 'Задачи')">
+                <i class='bx bx-check-circle'></i>
+                <span>Задачи</span>
+            </div>
+            <div class="nav-item" onclick="switchTab('habits', 'Привычки')">
+                <i class='bx bx-run'></i>
+                <span>Привычки</span>
+            </div>
+            <div class="nav-item" onclick="switchTab('settings', 'Настройки')">
+                <i class='bx bx-cog'></i>
+                <span>Настройки</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
