@@ -888,7 +888,6 @@ async def chat_with_ai(message: types.Message):
         ai_response = await get_ai_response(prompt)
         await message.answer(ai_response)
     except Exception as e:
-```
         logging.error(f"AI Error: {e}")
         await message.answer("Прости, мой ИИ-мозг временно недоступен. Попробуй позже!")
 
