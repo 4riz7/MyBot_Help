@@ -18,8 +18,14 @@ import yt_dlp
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 import speech_recognition as sr
-import matplotlib.pyplot as plt
-import io
+try:
+    import matplotlib.pyplot as plt
+    import io
+    CHARTS_AVAILABLE = True
+except ImportError:
+    CHARTS_AVAILABLE = False
+    logging.warning("Matplotlib not found. Charts will be disabled.")
+    
 from pydub import AudioSegment
 
 from pyrogram import Client, filters as py_filters, enums, errors
@@ -453,6 +459,10 @@ async def cmd_remind(message: types.Message, command: CommandObject):
 
 # Daily Morning Brief
 async def send_expense_chart(message: types.Message):
+    if not CHARTS_AVAILABLE:
+        await message.answer("⚠️ Библиотека для графиков (matplotlib) не установлена на сервере.")
+        return
+
     user_id = message.from_user.id
     # Get expenses from DB
     try:
