@@ -266,8 +266,9 @@ async def process_city_setup(message: types.Message, state: FSMContext):
     await state.clear()
 
 # WebApp Data Handler
-@dp.message(F.web_app_data)
+@dp.message(F.content_type == types.ContentType.WEB_APP_DATA)
 async def handle_webapp_data(message: types.Message):
+    logging.info(f"📲 Received WebApp Data: {message.web_app_data.data}")
     try:
         data = json.loads(message.web_app_data.data)
         action = data.get('action')
