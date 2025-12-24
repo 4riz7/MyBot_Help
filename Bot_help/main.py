@@ -18,6 +18,8 @@ import yt_dlp
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 import speech_recognition as sr
+import matplotlib.pyplot as plt
+import io
 from pydub import AudioSegment
 
 from pyrogram import Client, filters as py_filters, enums, errors
@@ -305,6 +307,9 @@ async def handle_webapp_data(message: types.Message):
             database.delete_user_session(message.from_user.id)
             await message.answer("🛑 UserBot отключен.")
 
+        elif action == 'get_stats':
+            await send_expense_chart(message)
+
     except Exception as e:
         logging.error(f"WebApp Error: {e}")
         await message.answer("Ошибка при обработке данных из приложения.")
@@ -447,6 +452,44 @@ async def cmd_remind(message: types.Message, command: CommandObject):
         await message.answer("Ошибка формата. Пример: /remind 14:00 Сходить в магазин")
 
 # Daily Morning Brief
+async def send_expense_chart(message: types.Message):
+    user_id = message.from_user.id
+    # Get expenses from DB
+    # We need a new function in database.py or use raw SQL here for simplicity? 
+    # Let's add get_expense_stats to database.py first or do it inline if simple.
+    # Inline for now to verify.
+    try:
+        conn = database.sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT category, SUM(amount) FROM expenses WHERE user_id = ? GROUP BY category", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            await message.answer("📊 У вас пока нет расходов для статистики.")
+            return
+
+        categories = [row[0] for row in rows]
+        amounts = [row[1] for row in rows]
+        
+        # Plotting
+        plt.figure(figsize=(6, 6))
+        plt.pie(amounts, labels=categories, autopct='%1.1f%%', startangle=140, colors=plt.cm.Paired.colors)
+        plt.title('Ваши расходы')
+        
+        # Save to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        photo = types.BufferedInputFile(buf.read(), filename="chart.png")
+        await message.answer_photo(photo, caption="📊 Ваша статистика расходов")
+        
+    except Exception as e:
+        logging.error(f"Chart Error: {e}")
+        await message.answer("Не удалось построить график.")
+
 async def get_weather(city_name: str):
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={config.WEATHER_API_KEY}&units=metric&lang=ru"

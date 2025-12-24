@@ -11,3 +11,4 @@ pypdf
 SpeechRecognition
 pydub
 pyrogram
+matplotlib
