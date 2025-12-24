@@ -895,7 +895,7 @@ async def chat_with_ai(message: types.Message):
 # Check Habit Reminders
 async def check_habit_reminders():
     # Only run check if seconds are near 00 to avoid duplicates? APScheduler handles interval gracefully generally.
-    now = datetime.datetime.now()
+    now = datetime.now()
     current_time = now.strftime("%H:%M")
     
     habits = database.get_habits_with_reminders()
