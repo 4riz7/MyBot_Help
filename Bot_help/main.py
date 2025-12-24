@@ -228,47 +228,31 @@ def admin_only(func):
     return wrapper
 
 # Main Menu Keyboard
-def get_main_menu():
-    web_app_btn = KeyboardButton(text="⚙️ Настройки", web_app=WebAppInfo(url=config.WEBAPP_URL)) if hasattr(config, 'WEBAPP_URL') and config.WEBAPP_URL else None
-    
-    # Base layout
-    layout = [
-        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="💎 Привычки")],
-        [KeyboardButton(text="📊 Финансы"), KeyboardButton(text="📝 Заметка")],
-        [KeyboardButton(text="📧 Почта"), KeyboardButton(text="🕵️ UserBot")],
-        [KeyboardButton(text="🌦 Погода"), KeyboardButton(text="⏰ Напомнить")]
-    ]
-    
-    # Add settings/help row
-    bottom_row = [KeyboardButton(text="❓ Помощь")]
-    if web_app_btn:
-        bottom_row.insert(0, web_app_btn)
-    else:
-        bottom_row.insert(0, KeyboardButton(text="🏙 Сменить город"))
-        
-    layout.append(bottom_row)
-    
-    return ReplyKeyboardMarkup(keyboard=layout, resize_keyboard=True)
-
-# Group/Channel Restriction
 @dp.my_chat_member()
 async def leave_groups(event: ChatMemberUpdated):
     if event.chat.type in ["group", "supergroup", "channel"]:
         await bot.leave_chat(event.chat.id)
         logging.info(f"Left chat {event.chat.title} ({event.chat.id}) because I am not allowed in groups.")
 
+def get_main_menu():
+    # Only one button for the app
+    url = config.WEBAPP_URL if hasattr(config, 'WEBAPP_URL') else "https://google.com"
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))]
+    ], resize_keyboard=True)
+    return kb
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     database.add_user(message.from_user.id)
-    # Check if city is set (default is Moscow, but maybe we want to force ask?)
-    # Let's ask if it's a fresh start or just update info
     
     await message.answer(
-        f"Привет, {message.from_user.first_name}! Я твой умный помощник.\n"
-        "Я могу считать твои деньги, сохранять заметки, скачивать видео и напоминать о важном.\n\n"
-        "Для начала, напиши название своего города (например: Москва), чтобы я мог показывать точную погоду:"
+        f"Привет, {message.from_user.first_name}! 👋\n\n"
+        "Теперь все функции управления находятся в **Мини-приложении**.\n"
+        "Нажми кнопку ниже, чтобы управлять задачами, финансами и настройками.\n\n"
+        "💬 А здесь ты можешь просто общаться со мной или задавать вопросы ИИ.",
+        reply_markup=get_main_menu()
     )
-    await state.set_state(SettingsStates.waiting_for_city)
 
 @dp.message(SettingsStates.waiting_for_city)
 async def process_city_setup(message: types.Message, state: FSMContext):
@@ -286,16 +270,37 @@ async def process_city_setup(message: types.Message, state: FSMContext):
 async def handle_webapp_data(message: types.Message):
     try:
         data = json.loads(message.web_app_data.data)
-        if data.get('action') == 'update_city':
+        action = data.get('action')
+        
+        if action == 'update_city':
             city = data.get('city')
             database.update_user_city(message.from_user.id, city)
-            await message.answer(
-                f"✅ Настройки сохранены!\nВаш город теперь: {city}",
-                reply_markup=get_main_menu()
-            )
+            await message.answer(f"🏙 Ваш город изменен на: {city}")
+            
+        elif action == 'add_expense':
+            amount = data.get('amount')
+            category = data.get('category')
+            database.add_expense(message.from_user.id, amount, category)
+            await message.answer(f"💸 Расход записан: {amount}₽ на {category}")
+            
+        elif action == 'add_task':
+            text = data.get('text')
+            database.add_task(message.from_user.id, text)
+            await message.answer(f"✅ Задача добавлена: {text}")
+            
+        elif action == 'add_habit':
+            text = data.get('text')
+            database.add_habit(message.from_user.id, text)
+            await message.answer(f"💎 Новая привычка: {text}")
+
+        elif action == 'stop_userbot':
+            await ub_manager.stop_client(message.from_user.id)
+            database.delete_user_session(message.from_user.id)
+            await message.answer("🛑 UserBot отключен.")
+
     except Exception as e:
         logging.error(f"WebApp Error: {e}")
-        await message.answer("Ошибка при сохранении настроек.")
+        await message.answer("Ошибка при обработке данных из приложения.")
 
 @dp.message(F.text == "🏙 Сменить город")
 async def cmd_change_city(message: types.Message, state: FSMContext):
