@@ -18,8 +18,8 @@ import yt_dlp
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 import speech_recognition as sr
-# import matplotlib.pyplot as plt
-# import io
+import matplotlib.pyplot as plt
+import io
 from pydub import AudioSegment
 
 from pyrogram import Client, filters as py_filters, enums, errors
@@ -453,12 +453,39 @@ async def cmd_remind(message: types.Message, command: CommandObject):
 
 # Daily Morning Brief
 async def send_expense_chart(message: types.Message):
-    await message.answer("📊 Графики временно отключены для отладки.")
-    return
-    '''
     user_id = message.from_user.id
-    # ... code ...
-    '''
+    # Get expenses from DB
+    try:
+        conn = database.sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT category, SUM(amount) FROM expenses WHERE user_id = ? GROUP BY category", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            await message.answer("📊 У вас пока нет расходов для статистики.")
+            return
+
+        categories = [row[0] for row in rows]
+        amounts = [row[1] for row in rows]
+        
+        # Plotting
+        plt.figure(figsize=(6, 6))
+        plt.pie(amounts, labels=categories, autopct='%1.1f%%', startangle=140, colors=plt.cm.Paired.colors)
+        plt.title('Ваши расходы')
+        
+        # Save to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        
+        photo = types.BufferedInputFile(buf.read(), filename="chart.png")
+        await message.answer_photo(photo, caption="📊 Ваша статистика расходов")
+        
+    except Exception as e:
+        logging.error(f"Chart Error: {e}")
+        await message.answer("Не удалось построить график.")
 
 async def get_weather(city_name: str):
     try:
