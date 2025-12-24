@@ -291,8 +291,14 @@ async def handle_webapp_data(message: types.Message):
             
         elif action == 'add_habit':
             text = data.get('text')
-            database.add_habit(message.from_user.id, text)
-            await message.answer(f"💎 Новая привычка: {text}")
+            time = data.get('time') # "HH:MM" or ""
+            if not time:
+                time = None
+            database.add_habit(message.from_user.id, text, time)
+            msg = f"💎 Новая привычка: {text}"
+            if time:
+                msg += f"\n⏰ Напоминание в {time}"
+            await message.answer(msg)
 
         elif action == 'stop_userbot':
             await ub_manager.stop_client(message.from_user.id)
@@ -882,20 +888,41 @@ async def chat_with_ai(message: types.Message):
         ai_response = await get_ai_response(prompt)
         await message.answer(ai_response)
     except Exception as e:
+```
         logging.error(f"AI Error: {e}")
         await message.answer("Прости, мой ИИ-мозг временно недоступен. Попробуй позже!")
+
+# Check Habit Reminders
+async def check_habit_reminders():
+    # Only run check if seconds are near 00 to avoid duplicates? APScheduler handles interval gracefully generally.
+    now = datetime.datetime.now()
+    current_time = now.strftime("%H:%M")
+    
+    habits = database.get_habits_with_reminders()
+    for row in habits:
+        # id, user_id, name, reminder_time
+        habit_id, user_id, name, reminder_time = row
+        
+        if reminder_time == current_time:
+            try:
+                await bot.send_message(user_id, f"💎 Напоминание о привычке:\n👉 {name}")
+                logging.info(f"Sent habit reminder to {user_id} for {name}")
+            except Exception as e:
+                logging.error(f"Failed to send habit reminder: {e}")
 
 async def main():
     database.init_db()
     
-    # Save PID for management scripts
+    # Write PID for update script
+    pid = os.getpid()
     with open("bot.pid", "w") as f:
-        f.write(str(os.getpid()))
-    
-    # Schedule jobs
-    scheduler.add_job(send_morning_brief, 'cron', hour=8, minute=0)
-    scheduler.add_job(database.cleanup_old_messages, 'cron', hour=4, minute=0)
-    scheduler.add_job(check_deleted_messages, 'interval', minutes=2)  # Check every 2 minutes
+        f.write(str(pid))
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(send_morning_brief, "cron", hour=8, minute=0)
+    scheduler.add_job(database.cleanup_old_messages, "cron", hour=4, minute=0) # Kept original cleanup_old_messages as database method
+    scheduler.add_job(check_deleted_messages, "interval", minutes=2) # Kept original check_deleted_messages interval
+    scheduler.add_job(check_habit_reminders, "cron", second=0) # Run every minute at 00 seconds
     scheduler.start()
     
     # Start saved user sessions

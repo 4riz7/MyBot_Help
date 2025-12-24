@@ -17,4 +17,4 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 # UserBot Sync
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-WEBAPP_URL = "https://4riz7.github.io/4riz-github.io/index.html"
+WEBAPP_URL = "https://4riz7.github.io/4riz-github.io/index.html?v=2.0"

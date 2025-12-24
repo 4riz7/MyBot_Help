@@ -49,9 +49,15 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             name TEXT,
+            reminder_time TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE habits ADD COLUMN reminder_time TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS habit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,20 +187,29 @@ def complete_task(task_id: int):
     conn.close()
 
 # Habit Tracker Functions
-def add_habit(user_id: int, name: str):
+def add_habit(user_id: int, name: str, reminder_time: str = None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO habits (user_id, name) VALUES (?, ?)", (user_id, name))
+    cursor.execute("INSERT INTO habits (user_id, name, reminder_time) VALUES (?, ?, ?)", (user_id, name, reminder_time))
     conn.commit()
     conn.close()
 
 def get_habits(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name FROM habits WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT id, name, reminder_time FROM habits WHERE user_id = ?", (user_id,))
     habits = cursor.fetchall()
     conn.close()
     return habits
+
+def get_habits_with_reminders():
+    """Get all habits that have a reminder set"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, user_id, name, reminder_time FROM habits WHERE reminder_time IS NOT NULL")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def log_habit(habit_id: int, user_id: int, date_str: str):
     conn = sqlite3.connect(DB_PATH)
