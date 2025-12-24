@@ -26,7 +26,12 @@ except ImportError:
     CHARTS_AVAILABLE = False
     logging.warning("Matplotlib not found. Charts will be disabled.")
     
-from pydub import AudioSegment
+try:
+    from pydub import AudioSegment
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+    logging.warning("Pydub not found. Voice features disabled.")
 
 from pyrogram import Client, filters as py_filters, enums, errors
 from pyrogram.types import Message as PyMessage
@@ -703,6 +708,10 @@ async def summarize_pdf(message: types.Message):
 # Voice-to-Text
 @dp.message(F.voice)
 async def handle_voice(message: types.Message):
+    if not VOICE_AVAILABLE:
+        await message.answer("⚠️ Обработка голосовых недоступна (pydub не установлен).")
+        return
+        
     await message.answer("🎤 Обрабатываю твое голосовое...")
     
     file_id = message.voice.file_id
