@@ -3,12 +3,13 @@ import logging
 import re
 import os
 import httpx
+import json
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandObject
+from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
+from aiogram.filters import Command, CommandObject, ChatMemberUpdatedFilter, JOIN_TRANSITION
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton, ChatMemberUpdated, WebAppInfo
 from openai import OpenAI
 from groq import Groq
 from gigachat import GigaChat
@@ -82,6 +83,70 @@ async def get_ai_response(prompt: str):
 
     return "Прости, мои ИИ-мозги временно перегружены. Попробуй позже!"
 
+async def check_deleted_messages():
+    """Periodically check if cached messages still exist"""
+    try:
+        unchecked = database.get_unchecked_messages(limit=30)
+        if not unchecked:
+            return
+        
+        logging.info(f"🔍 Checking {len(unchecked)} messages for deletions...")
+        
+        for msg_id, chat_id, sender_id, text in unchecked:
+            # Get the user's UserBot client
+            user_client = None
+            for uid, client in ub_manager.clients.items():
+                user_client = client
+                user_id = uid
+                break
+            
+            if not user_client:
+                logging.warning("No active UserBot client found")
+                return
+            
+            try:
+                # Try to get the message
+                messages = await user_client.get_messages(chat_id, msg_id)
+                
+                if messages.empty:
+                    # Message was deleted!
+                    logging.info(f"🗑 Message {msg_id} was deleted!")
+                    
+                    # Get sender info
+                    name = "Неизвестный"
+                    try:
+                        user = await user_client.get_users(sender_id)
+                        name = f"{user.first_name} {user.last_name or ''}".strip()
+                    except:
+                        pass
+                    
+                    # Send notification
+                    notification = (
+                        f"🗑 **Удалено сообщение!**\n\n"
+                        f"👤 **От:** {name} (ID: {sender_id})\n"
+                        f"💬 **Контент:** {text}"
+                    )
+                    
+                    try:
+                        await bot.send_message(user_id, notification, parse_mode="Markdown")
+                        logging.info(f"✅ Notification sent for deleted message {msg_id}")
+                    except Exception as e:
+                        logging.error(f"Failed to send notification: {e}")
+                    
+                    # Remove from cache
+                    database.delete_cached_message(msg_id, chat_id)
+                else:
+                    # Message still exists, mark as checked
+                    database.mark_message_checked(msg_id, chat_id)
+                    
+            except Exception as e:
+                # If we get an error, assume message still exists and mark as checked
+                logging.debug(f"Error checking message {msg_id}: {e}")
+                database.mark_message_checked(msg_id, chat_id)
+                
+    except Exception as e:
+        logging.error(f"Error in check_deleted_messages: {e}")
+
 # States for broadcast, reminders and UserBot setup
 class Form(StatesGroup):
     waiting_for_broadcast = State()
@@ -90,6 +155,9 @@ class UserBotStates(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
     waiting_for_password = State()
+
+class SettingsStates(StatesGroup):
+    waiting_for_city = State()
 
 # --- UserBot Manager ---
 
@@ -112,10 +180,7 @@ class UserBotManager:
         # Register handlers for this client
         @client.on_message(py_filters.private)
         async def py_on_message(c, message: PyMessage):
-            # We cache messages from others AND ourselves to track all deletions if needed
-            # But usually user only wants to see what OTHERS deleted. 
-            # Let's cache everything, but filter in the deletion handler.
-            
+            # Cache all incoming messages
             content = message.text or message.caption
             if not content:
                 if message.photo: content = "[Фотография]"
@@ -128,51 +193,17 @@ class UserBotManager:
             
             sender_id = message.from_user.id if message.from_user else 0
             database.cache_message(message.id, message.chat.id, sender_id, content)
+            logging.info(f"📝 Cached message {message.id} from {sender_id} in chat {message.chat.id}")
 
-        @client.on_deleted_messages(py_filters.private)
-        async def py_on_deleted(c, messages):
-            logging.info(f"🗑 Deletion event detected! {len(messages)} messages deleted")
-            for msg in messages:
-                logging.info(f"  Checking message ID: {msg.id}")
-                # In some cases msg.chat might be None in on_deleted_messages
-                chat_id = msg.chat.id if msg.chat else None
-                if not chat_id:
-                    logging.warning(f"  ⚠️ No chat_id for message {msg.id}, skipping")
-                    continue # Cannot find in DB without chat_id
-                
-                logging.info(f"  Looking in cache: msg_id={msg.id}, chat_id={chat_id}")
-                cached = database.get_cached_message(msg.id, chat_id)
-                if cached:
-                    sender_id, text = cached
-                    logging.info(f"  ✅ Found in cache! Sender: {sender_id}, Text: {text[:30]}...")
-                    
-                    # Don't notify if the user deleted their own message (unless they want to)
-                    my_id = (await c.get_me()).id
-                    logging.info(f"  My ID: {my_id}, Sender ID: {sender_id}")
-                    if sender_id == my_id:
-                        logging.info(f"  ⏭️ Skipping own message")
-                        continue
-                        
-                    try:
-                        name = "Неизвестный"
-                        try:
-                            user = await c.get_users(sender_id)
-                            name = f"{user.first_name} {user.last_name or ''}".strip()
-                        except Exception as e:
-                            logging.warning(f"  Could not get user info: {e}")
-                            
-                        notification = (
-                            f"🗑 **Удалено сообщение!**\n\n"
-                            f"👤 **От:** {name} (ID: {sender_id})\n"
-                            f"💬 **Контент:** {text}"
-                        )
-                        logging.info(f"  📤 Sending notification to user {user_id}")
-                        await bot.send_message(user_id, notification, parse_mode="Markdown")
-                        logging.info(f"  ✅ Notification sent!")
-                    except Exception as e:
-                        logging.error(f"UserBot {user_id} error: {e}")
-                else:
-                    logging.warning(f"  ❌ Message {msg.id} not found in cache")
+        # NOTE: on_deleted_messages does NOT work for private chats in Telegram!
+        # Telegram API doesn't send deletion events for 1-on-1 chats.
+        # 
+        # Alternative approach: We need to periodically check if cached messages still exist
+        # This is a limitation of Telegram's MTProto protocol for privacy reasons.
+        
+        logging.warning("⚠️ ВАЖНО: Telegram API не поддерживает отслеживание удаленных сообщений в личных чатах!")
+        logging.warning("⚠️ Это ограничение самого Telegram, а не бота.")
+        logging.warning("⚠️ Отслеживание удалений работает ТОЛЬКО в группах и каналах.")
 
         try:
             await client.start()
@@ -198,23 +229,78 @@ def admin_only(func):
 
 # Main Menu Keyboard
 def get_main_menu():
-    buttons = [
+    web_app_btn = KeyboardButton(text="⚙️ Настройки", web_app=WebAppInfo(url=config.WEBAPP_URL)) if hasattr(config, 'WEBAPP_URL') and config.WEBAPP_URL else None
+    
+    # Base layout
+    layout = [
         [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="💎 Привычки")],
         [KeyboardButton(text="📊 Финансы"), KeyboardButton(text="📝 Заметка")],
         [KeyboardButton(text="📧 Почта"), KeyboardButton(text="🕵️ UserBot")],
-        [KeyboardButton(text="⏰ Напомнить"), KeyboardButton(text="❓ Помощь")]
+        [KeyboardButton(text="🌦 Погода"), KeyboardButton(text="⏰ Напомнить")]
     ]
-    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    
+    # Add settings/help row
+    bottom_row = [KeyboardButton(text="❓ Помощь")]
+    if web_app_btn:
+        bottom_row.insert(0, web_app_btn)
+    else:
+        bottom_row.insert(0, KeyboardButton(text="🏙 Сменить город"))
+        
+    layout.append(bottom_row)
+    
+    return ReplyKeyboardMarkup(keyboard=layout, resize_keyboard=True)
+
+# Group/Channel Restriction
+@dp.my_chat_member()
+async def leave_groups(event: ChatMemberUpdated):
+    if event.chat.type in ["group", "supergroup", "channel"]:
+        await bot.leave_chat(event.chat.id)
+        logging.info(f"Left chat {event.chat.title} ({event.chat.id}) because I am not allowed in groups.")
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
     database.add_user(message.from_user.id)
+    # Check if city is set (default is Moscow, but maybe we want to force ask?)
+    # Let's ask if it's a fresh start or just update info
+    
     await message.answer(
         f"Привет, {message.from_user.first_name}! Я твой умный помощник.\n"
         "Я могу считать твои деньги, сохранять заметки, скачивать видео и напоминать о важном.\n\n"
-        "Нажми кнопку ниже или просто напиши мне любой вопрос!",
+        "Для начала, напиши название своего города (например: Москва), чтобы я мог показывать точную погоду:"
+    )
+    await state.set_state(SettingsStates.waiting_for_city)
+
+@dp.message(SettingsStates.waiting_for_city)
+async def process_city_setup(message: types.Message, state: FSMContext):
+    city = message.text.strip()
+    database.update_user_city(message.from_user.id, city)
+    await message.answer(
+        f"✅ Отлично! Город {city} сохранен.\n"
+        "Теперь ты можешь пользоваться всеми функциями:",
         reply_markup=get_main_menu()
     )
+    await state.clear()
+
+# WebApp Data Handler
+@dp.message(F.web_app_data)
+async def handle_webapp_data(message: types.Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        if data.get('action') == 'update_city':
+            city = data.get('city')
+            database.update_user_city(message.from_user.id, city)
+            await message.answer(
+                f"✅ Настройки сохранены!\nВаш город теперь: {city}",
+                reply_markup=get_main_menu()
+            )
+    except Exception as e:
+        logging.error(f"WebApp Error: {e}")
+        await message.answer("Ошибка при сохранении настроек.")
+
+@dp.message(F.text == "🏙 Сменить город")
+async def cmd_change_city(message: types.Message, state: FSMContext):
+    await message.answer("Введите название нового города:")
+    await state.set_state(SettingsStates.waiting_for_city)
 
 @dp.message(Command("help"))
 @dp.message(F.text == "❓ Помощь")
@@ -349,17 +435,21 @@ async def cmd_remind(message: types.Message, command: CommandObject):
         await message.answer("Ошибка формата. Пример: /remind 14:00 Сходить в магазин")
 
 # Daily Morning Brief
-async def get_weather():
+async def get_weather(city_name: str):
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={config.CITY}&appid={config.WEATHER_API_KEY}&units=metric&lang=ru"
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={config.WEATHER_API_KEY}&units=metric&lang=ru"
         async with httpx.AsyncClient() as client:
             r = await client.get(url)
             data = r.json()
+            if r.status_code != 200:
+                return f"Ошибка: {data.get('message', 'Неизвестная ошибка')}"
+            
             temp = data['main']['temp']
             desc = data['weather'][0]['description']
             return f"{temp}°C, {desc}"
-    except:
-        return "+2°C, облачно (ошибка API)"
+    except Exception as e:
+        return f"Ошибка получения погоды: {e}"
+
 
 async def get_currency():
     try:
@@ -373,19 +463,27 @@ async def get_currency():
 
 async def send_morning_brief():
     users = database.get_all_users()
-    weather = await get_weather()
     currency = await get_currency()
     
-    brief = f"☀️ Доброе утро! Вот твой утренний дайджест ({config.CITY}):\n"
-    brief += f"🌡 Погода: {weather}\n"
-    brief += f"💵 Курс USD: {currency}\n"
-    brief += "📅 Не забудь проверить свои дела на сегодня!"
-    
     for user_id in users:
+        city = database.get_user_city(user_id)
+        weather = await get_weather(city)
+        
+        brief = f"☀️ Доброе утро! Вот твой утренний дайджест ({city}):\n"
+        brief += f"🌡 Погода: {weather}\n"
+        brief += f"💵 Курс USD: {currency}\n"
+        brief += "📅 Не забудь проверить свои дела на сегодня!"
+        
         try:
             await bot.send_message(user_id, brief)
         except Exception as e:
             logging.error(f"Failed to send brief to {user_id}: {e}")
+
+@dp.message(F.text == "🌦 Погода")
+async def btn_weather(message: types.Message):
+    city = database.get_user_city(message.from_user.id)
+    weather = await get_weather(city)
+    await message.answer(f"🌡 Погода в {city}: {weather}")
 
 # To-Do List
 @dp.message(Command("todo"))
@@ -784,9 +882,14 @@ async def chat_with_ai(message: types.Message):
 async def main():
     database.init_db()
     
+    # Save PID for management scripts
+    with open("bot.pid", "w") as f:
+        f.write(str(os.getpid()))
+    
     # Schedule jobs
     scheduler.add_job(send_morning_brief, 'cron', hour=8, minute=0)
     scheduler.add_job(database.cleanup_old_messages, 'cron', hour=4, minute=0)
+    scheduler.add_job(check_deleted_messages, 'interval', minutes=2)  # Check every 2 minutes
     scheduler.start()
     
     # Start saved user sessions

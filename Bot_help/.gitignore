@@ -7,3 +7,6 @@ venv/
 .idea/
 .vscode/
 *.log
+
+*.pid
+*.session

@@ -7,9 +7,17 @@ def init_db():
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY
+            user_id INTEGER PRIMARY KEY,
+            city TEXT DEFAULT 'Moscow'
         )
     """)
+    # Migration for existing table
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN city TEXT DEFAULT 'Moscow'")
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,6 +74,7 @@ def init_db():
             user_id INTEGER,
             text TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            checked BOOLEAN DEFAULT 0,
             PRIMARY KEY (message_id, chat_id)
         )
     """)
@@ -92,6 +101,23 @@ def get_all_users():
     users = [row[0] for row in cursor.fetchall()]
     conn.close()
     return users
+
+def update_user_city(user_id: int, city: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    # Ensure user exists first
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    cursor.execute("UPDATE users SET city = ? WHERE user_id = ?", (city, user_id))
+    conn.commit()
+    conn.close()
+
+def get_user_city(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT city FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else "Moscow"
 
 def get_user_count():
     conn = sqlite3.connect(DB_PATH)
@@ -246,5 +272,39 @@ def delete_user_session(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+def get_unchecked_messages(limit: int = 50):
+    """Get unchecked messages from last 24 hours"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT message_id, chat_id, user_id, text 
+        FROM message_cache 
+        WHERE checked = 0 
+        AND timestamp > datetime('now', '-1 day')
+        ORDER BY timestamp DESC 
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def mark_message_checked(message_id: int, chat_id: int):
+    """Mark message as checked"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE message_cache SET checked = 1 WHERE message_id = ? AND chat_id = ?", 
+                   (message_id, chat_id))
+    conn.commit()
+    conn.close()
+
+def delete_cached_message(message_id: int, chat_id: int):
+    """Delete message from cache (when confirmed deleted)"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM message_cache WHERE message_id = ? AND chat_id = ?", 
+                   (message_id, chat_id))
     conn.commit()
     conn.close()
