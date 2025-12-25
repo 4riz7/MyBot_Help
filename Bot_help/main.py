@@ -317,7 +317,7 @@ def get_main_menu():
     url = config.WEBAPP_URL if hasattr(config, 'WEBAPP_URL') else "https://google.com"
     kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))],
-        [KeyboardButton(text="📧 Временная почта")]
+        [KeyboardButton(text="📧 Временная почта"), KeyboardButton(text="🌦 Погода")]
     ], resize_keyboard=True)
     return kb
 
