@@ -606,10 +606,18 @@ async def process_habit_log(callback: types.CallbackQuery):
 # --- TEMPORARY MAIL ---
 @dp.message(F.text == "📧 Временная почта")
 async def cmd_temp_mail(message: types.Message):
-    # Generate random email using 1secmail
+    # User-Agent to avoid blocking
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        async with httpx.AsyncClient(verify=False) as client:
+        async with httpx.AsyncClient(verify=False, follow_redirects=True, headers=headers) as client:
             resp = await client.get("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1")
+            
+            if resp.status_code != 200:
+                await message.answer(f"Сервис почты недоступен (код {resp.status_code}). Попробуйте позже.")
+                return
+
             email = resp.json()[0]
             
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -630,12 +638,20 @@ async def cmd_temp_mail(message: types.Message):
 async def check_temp_mail(callback: types.CallbackQuery):
     email = callback.data.split("_")[2]
     login, domain = email.split("@")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     
     try:
-        async with httpx.AsyncClient(verify=False) as client:
+        async with httpx.AsyncClient(verify=False, follow_redirects=True, headers=headers) as client:
             url = f"https://www.1secmail.com/api/v1/?action=getMessages&login={login}&domain={domain}"
             resp = await client.get(url)
-            messages = resp.json()
+            
+            try:
+                messages = resp.json()
+            except json.JSONDecodeError:
+                 await callback.answer("Ошибка ответа сервера почты.", show_alert=True)
+                 return
             
             if not messages:
                 await callback.answer("📭 Входящих писем нет.", show_alert=True)
@@ -652,42 +668,6 @@ async def check_temp_mail(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Check mail error: {e}")
         await callback.answer("Ошибка проверки почты.", show_alert=True)
-
-# Media Downloader (yt-dlp)
-@dp.message(F.text.regexp(r'https?://(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/'))
-async def download_media(message: types.Message):
-    url = re.search(r'https?://[^\s]+', message.text).group(0)
-    msg = await message.answer("⏳ Скачиваю... (ищу качество до 50 МБ)")
-    
-    # Try to find format < 50MB
-    ydl_opts = {
-        'format': 'best[filesize<50M]/best[height<=480]/worst', # Try to fit in Telegram limit
-        'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'noplaylist': True
-    }
-    
-    try:
-        # Check downloader
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
-            
-        # Run in thread not to block
-        loop = asyncio.get_event_loop()
-        
-        def run_download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return ydl.prepare_filename(info)
-        
-        filename = await loop.run_in_executor(None, run_download)
-            
-        video = FSInputFile(filename)
-        await message.answer_video(video, caption="📹 Вот видео!")
-        os.remove(filename)
-        await msg.delete()
-    except Exception as e:
-        logging.error(f"Download Error: {e}")
-        await msg.edit_text("❌ Видео слишком большое (Telegram принимает до 50 МБ) или возникла ошибка.")
 
 # Summarizer (Articles)
 @dp.message(F.text.regexp(r'https?://(?!www\.youtube|youtu\.be|tiktok\.com|instagram\.com)[^\s]+'))
