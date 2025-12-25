@@ -19,12 +19,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 import speech_recognition as sr
 
-# Matplotlib causes hard crash on this environment, disabled hard.
-# try:
-#     import matplotlib.pyplot as plt
-#     import io
-#     CHARTS_AVAILABLE = True
-# except ImportError:
+# Charts removed in favor of text stats
 CHARTS_AVAILABLE = False
     
 try:
@@ -465,12 +460,7 @@ async def cmd_remind(message: types.Message, command: CommandObject):
 
 # Daily Morning Brief
 async def send_expense_chart(message: types.Message):
-    if not CHARTS_AVAILABLE:
-        await message.answer("⚠️ Библиотека для графиков (matplotlib) не установлена на сервере.")
-        return
-
     user_id = message.from_user.id
-    # Get expenses from DB
     try:
         conn = database.sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
@@ -482,26 +472,23 @@ async def send_expense_chart(message: types.Message):
             await message.answer("📊 У вас пока нет расходов для статистики.")
             return
 
-        categories = [row[0] for row in rows]
-        amounts = [row[1] for row in rows]
+        total = sum(row[1] for row in rows)
+        text = "📊 <b>Ваши расходы:</b>\n\n"
         
-        # Plotting
-        plt.figure(figsize=(6, 6))
-        plt.pie(amounts, labels=categories, autopct='%1.1f%%', startangle=140, colors=plt.cm.Paired.colors)
-        plt.title('Ваши расходы')
+        # Sort by amount desc
+        rows.sort(key=lambda x: x[1], reverse=True)
         
-        # Save to buffer
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
+        for category, amount in rows:
+            percent = (amount / total) * 100
+            text += f"▫️ <b>{category}</b>: {amount:.0f}₽ ({percent:.1f}%)\n"
+            
+        text += f"\n💰 <b>Всего:</b> {total:.0f}₽"
         
-        photo = types.BufferedInputFile(buf.read(), filename="chart.png")
-        await message.answer_photo(photo, caption="📊 Ваша статистика расходов")
+        await message.answer(text, parse_mode="HTML")
         
     except Exception as e:
-        logging.error(f"Chart Error: {e}")
-        await message.answer("Не удалось построить график.")
+        logging.error(f"Stats Error: {e}")
+        await message.answer("Не удалось получить статистику.")
 
 async def get_weather(city_name: str):
     try:
