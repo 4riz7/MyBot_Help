@@ -171,6 +171,7 @@ class UserBotStates(StatesGroup):
     waiting_for_phone = State()
     waiting_for_code = State()
     waiting_for_password = State()
+    waiting_for_session_string = State()
 
 class SettingsStates(StatesGroup):
     waiting_for_city = State()
@@ -976,74 +977,63 @@ async def process_ub_stop(callback: types.CallbackQuery):
     await callback.message.edit_text("🔴 UserBot отключен. Данные сессии удалены.")
     await callback.answer()
 
-@dp.message(UserBotStates.waiting_for_phone)
-async def process_phone(message: types.Message, state: FSMContext):
-    phone = message.text.strip().replace(" ", "")
-    if not phone.startswith("+"):
-        await message.answer("Пожалуйста, введите номер, начиная с +")
-        return
-
-    temp_client = Client(
-        name=f"temp_{message.from_user.id}",
-        api_id=config.API_ID,
-        api_hash=config.API_HASH,
-        in_memory=True
+@dp.callback_query(F.data == "ub_connect")
+async def process_ub_connect(callback: types.CallbackQuery, state: FSMContext):
+    # Instead of interactive login (which fails due to IP/timeouts), ask for session string
+    await callback.message.edit_text(
+        "🔐 **Авторизация UserBot**\n\n"
+        "Из-за защиты Telegram авторизация по коду часто не работает на серверах. "
+        "Самый надежный способ — создать сессию вручную.\n\n"
+        "1. Запустите этот Python скрипт на своем ПК/телефоне (не на сервере!):\n"
+        "```python\n"
+        "from pyrogram import Client\n"
+        "async def main():\n"
+        "    app = Client('my_account', api_id=YourID, api_hash='YourHash', in_memory=True)\n"
+        "    await app.start()\n"
+        "    print(await app.export_session_string())\n"
+        "    await app.stop()\n"
+        "\n"
+        "import asyncio; asyncio.run(main())\n"
+        "```\n"
+        "2. Скопируйте полученную длинную строку.\n"
+        "3. Отправьте её мне боту в ответном сообщении.",
+        parse_mode="Markdown"
     )
-    await temp_client.connect()
-    try:
-        code_info = await temp_client.send_code(phone)
-        await state.update_data(phone=phone, phone_code_hash=code_info.phone_code_hash, temp_client=temp_client)
-        await message.answer("📲 Код подтверждения отправлен в ваш Telegram. Введите его:")
-        await state.set_state(UserBotStates.waiting_for_code)
-    except Exception as e:
-        logging.error(f"Send code error: {e}")
-        await message.answer(f"❌ Ошибка: {e}. Попробуйте позже.")
-        await temp_client.disconnect()
-        await state.clear()
+    await state.set_state(UserBotStates.waiting_for_session_string)
+    await callback.answer()
 
-@dp.message(UserBotStates.waiting_for_code)
-async def process_code(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    temp_client = data['temp_client']
-    code = message.text.strip()
-
-    try:
-        await temp_client.sign_in(data['phone'], data['phone_code_hash'], code)
-    except errors.SessionPasswordNeeded:
-        await message.answer("🔐 У вас включена двухфакторная аутентификация. Введите ваш пароль:")
-        await state.set_state(UserBotStates.waiting_for_password)
-        return
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-        await temp_client.disconnect()
-        await state.clear()
-        return
-
-    await finalize_ub_login(message, state, temp_client)
-
-@dp.message(UserBotStates.waiting_for_password)
-async def process_password(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    temp_client = data['temp_client']
-    password = message.text.strip()
-
-    try:
-        await temp_client.check_password(password)
-    except Exception as e:
-        await message.answer(f"❌ Неверный пароль или ошибка: {e}")
-        return
-
-    await finalize_ub_login(message, state, temp_client)
-
-async def finalize_ub_login(message: types.Message, state: FSMContext, temp_client: Client):
-    session_string = await temp_client.export_session_string()
-    database.save_user_session(message.from_user.id, session_string)
+@dp.message(UserBotStates.waiting_for_session_string)
+async def process_session_string(message: types.Message, state: FSMContext):
+    session_string = message.text.strip()
     
-    await ub_manager.start_client(message.from_user.id, session_string)
-    await temp_client.disconnect()
-    
-    await message.answer("🎉 **Готово!**\nТеперь я буду присылать уведомления, если кто-то удалит сообщение в вашем ЛС.", parse_mode="Markdown")
-    await state.clear()
+    # Basic validation
+    if len(session_string) < 100:
+        await message.answer("❌ Это не похоже на строку сессии. Она должна быть очень длинной.")
+        return
+
+    try:
+        # Test the session
+        temp_client = Client(
+            name=f"test_{message.from_user.id}",
+            api_id=config.API_ID,
+            api_hash=config.API_HASH,
+            session_string=session_string,
+            in_memory=True
+        )
+        await temp_client.start()
+        me = await temp_client.get_me()
+        await temp_client.stop()
+        
+        # Save and start
+        database.save_user_session(message.from_user.id, session_string)
+        await ub_manager.start_client(message.from_user.id, session_string)
+        
+        await message.answer(f"✅ **Успешно!** Вы вошли как {me.first_name}.\nUserBot запущен и следит за удаленными сообщениями.", parse_mode="Markdown")
+        await state.clear()
+        
+    except Exception as e:
+        logging.error(f"Session Import Error: {e}")
+        await message.answer(f"❌ Ошибка ессии: {e}\nВозможно, строка скопирована не полностью или отозвана.")
 
 
 # --- Old single-user code removed ---
