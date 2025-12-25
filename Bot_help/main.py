@@ -723,24 +723,31 @@ async def handle_location(message: types.Message):
     database.update_user_location(message.from_user.id, lat, lon)
     
     weather = await get_weather(lat=lat, lon=lon)
-    await message.answer(f"✅ Локация сохранена!\n🌡 Погода здесь: {weather}")
+    await message.answer(f"✅ Локация сохранена!\n🌡 Погода здесь: {weather}", reply_markup=get_main_menu())
 
 @dp.message(F.text == "🌦 Погода")
 async def btn_weather(message: types.Message):
     loc = database.get_user_location(message.from_user.id)
+    text = ""
     if loc:
         weather = await get_weather(lat=loc[0], lon=loc[1])
-        await message.answer(f"🌡 Текущая погода: {weather}")
+        text = f"🌡 Текущая погода: {weather}\n\n📍 Ищем по вашим координатам."
     else:
-        kb = ReplyKeyboardMarkup(keyboard=[
-            [KeyboardButton(text="📍 Отправить геопозицию", request_location=True)],
-            [KeyboardButton(text="Отмена")]
-        ], resize_keyboard=True, one_time_keyboard=True)
-        await message.answer("Я не знаю, где вы находитесь. Нажмите кнопку ниже, чтобы отправить координаты (или 'Отмена').", reply_markup=kb)
+        city = database.get_user_city(message.from_user.id)
+        weather = await get_weather(city_name=city)
+        text = f"🌡 Погода в {city}: {weather}\n\n🏙 Используется город по умолчанию."
 
+    kb = ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📍 Обновить геопозицию", request_location=True)],
+        [KeyboardButton(text="🔙 Назад в меню")]
+    ], resize_keyboard=True)
+    
+    await message.answer(text, reply_markup=kb)
+
+@dp.message(F.text == "🔙 Назад в меню")
 @dp.message(F.text == "Отмена")
 async def cancel_action(message: types.Message):
-    await message.answer("Действие отменено.", reply_markup=get_main_menu())
+    await message.answer("Главное меню:", reply_markup=get_main_menu())
 
 # To-Do List
 @dp.message(Command("todo"))
