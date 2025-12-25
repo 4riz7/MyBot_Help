@@ -1039,8 +1039,8 @@ async def process_session_string(message: types.Message, state: FSMContext):
 # --- Old single-user code removed ---
 # (Removing the manual userbot initialization and handlers)
 
-# AI logic (enhanced with notes) - MUST BE LAST HANDLER
-@dp.message()
+# AI logic - MUST BE LAST HANDLER
+@dp.message(StateFilter(None))
 async def chat_with_ai(message: types.Message):
     if not message.text:
         return
