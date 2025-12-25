@@ -1002,6 +1002,8 @@ async def process_ub_connect(callback: types.CallbackQuery, state: FSMContext):
         "    api_id = 123456 \n"
         "    api_hash = 'ваша_хэш_строка'\n"
         "    \n"
+        "    print('ВАЖНО: Код подтверждения придет в приложение Telegram (на другом устройстве), а НЕ в СМС!')\n"
+        "    \n"
         "    app = Client('my_account', api_id=api_id, api_hash=api_hash, in_memory=True)\n"
         "    await app.start()\n"
         "    print(await app.export_session_string())\n"
