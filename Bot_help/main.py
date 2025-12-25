@@ -95,66 +95,73 @@ async def get_ai_response(prompt: str):
 async def check_deleted_messages():
     """Periodically check if cached messages still exist"""
     try:
-        unchecked = database.get_unchecked_messages(limit=30)
-        if not unchecked:
-            return
-        
-        logging.info(f"🔍 Checking {len(unchecked)} messages for deletions...")
-        
-        for msg_id, chat_id, sender_id, text in unchecked:
-            # Get the user's UserBot client
-            user_client = None
-            for uid, client in ub_manager.clients.items():
-                user_client = client
-                user_id = uid
-                break
-            
-            if not user_client:
-                logging.warning("No active UserBot client found")
-                return
-            
-            try:
-                # Try to get the message
-                messages = await user_client.get_messages(chat_id, msg_id)
+        # Iterate over all connected userbots
+        for user_id, client in ub_manager.clients.items():
+            if not client.is_connected:
+                continue
                 
-                if messages.empty:
-                    # Message was deleted!
-                    logging.info(f"🗑 Message {msg_id} was deleted!")
-                    
-                    # Get sender info
-                    name = "Неизвестный"
-                    try:
-                        user = await user_client.get_users(sender_id)
-                        name = f"{user.first_name} {user.last_name or ''}".strip()
-                    except:
-                        pass
-                    
-                    # Send notification
-                    notification = (
-                        f"🗑 **Удалено сообщение!**\n\n"
-                        f"👤 **От:** {name} (ID: {sender_id})\n"
-                        f"💬 **Контент:** {text}"
-                    )
-                    
-                    try:
-                        await bot.send_message(user_id, notification, parse_mode="Markdown")
-                        logging.info(f"✅ Notification sent for deleted message {msg_id}")
-                    except Exception as e:
-                        logging.error(f"Failed to send notification: {e}")
-                    
-                    # Remove from cache
-                    database.delete_cached_message(msg_id, chat_id)
-                else:
-                    # Message still exists, mark as checked
-                    database.mark_message_checked(msg_id, chat_id)
-                    
-            except Exception as e:
-                # If we get an error, assume message still exists and mark as checked
-                logging.debug(f"Error checking message {msg_id}: {e}")
-                database.mark_message_checked(msg_id, chat_id)
+            # Get cached messages to check (last 100)
+            cached_msgs = database.get_messages_for_check(user_id)
+            if not cached_msgs:
+                continue
                 
+            # Group by chat_id to batch requests
+            # {chat_id: {msg_id: (sender_id, content, sender_name)}}
+            chats_to_check = {}
+            for row in cached_msgs:
+                mid, cid, sid, content, sname = row
+                if cid not in chats_to_check:
+                    chats_to_check[cid] = {}
+                chats_to_check[cid][mid] = (sid, content, sname)
+            
+            # Check each chat
+            for chat_id, messages_dict in chats_to_check.items():
+                msg_ids = list(messages_dict.keys())
+                try:
+                    # Batch request to Telegram
+                    current_messages = await client.get_messages(chat_id, msg_ids)
+                    
+                    # Ensure list
+                    if not isinstance(current_messages, list):
+                        current_messages = [current_messages]
+                    
+                    # Check statuses
+                    for i, msg_obj in enumerate(current_messages):
+                        original_id = msg_ids[i]
+                        
+                        is_deleted = False
+                        if msg_obj is None: 
+                            is_deleted = True
+                        elif hasattr(msg_obj, 'empty') and msg_obj.empty:
+                            is_deleted = True
+                            
+                        if is_deleted:
+                            sid, content, sname = messages_dict[original_id]
+                            
+                            notification = (
+                                f"🗑 **Удалено сообщение!**\n\n"
+                                f"👤 **От:** {sname}\n"
+                                f"💬 **Текст:** {content}"
+                            )
+                            
+                            try:
+                                await bot.send_message(user_id, notification, parse_mode="Markdown")
+                                logging.info(f"✅ Alert sent for msg {original_id}")
+                            except Exception as ex:
+                                logging.error(f"Send alert failed: {ex}")
+                                
+                            # Delete from cache so we don't alert again
+                            database.delete_cached_message(original_id, chat_id)
+                        else:
+                            # Message exists.
+                            # We don't need to do anything, it stays in cache for next check.
+                            pass
+                            
+                except Exception as e:
+                    logging.debug(f"Error checking chat {chat_id}: {e}")
+                    
     except Exception as e:
-        logging.error(f"Error in check_deleted_messages: {e}")
+        logging.error(f"Global check error: {e}")
 
 # States for broadcast, reminders and UserBot setup
 class Form(StatesGroup):
@@ -189,7 +196,10 @@ class UserBotManager:
         # Register handlers for this client
         @client.on_message(py_filters.private)
         async def py_on_message(c, message: PyMessage):
-            # Cache all incoming messages
+            # Cache all incoming messages from others
+            if message.from_user and message.from_user.is_self:
+                return
+
             content = message.text or message.caption
             if not content:
                 if message.photo: content = "[Фотография]"
@@ -201,8 +211,16 @@ class UserBotManager:
                 else: content = "[Медиа-сообщение]"
             
             sender_id = message.from_user.id if message.from_user else 0
-            database.cache_message(message.id, message.chat.id, sender_id, content)
-            logging.info(f"📝 Cached message {message.id} from {sender_id} in chat {message.chat.id}")
+            sender_name = message.from_user.first_name if message.from_user else "Unknown"
+            
+            database.cache_message(
+                message.id, 
+                message.chat.id, 
+                user_id, # Owner of userbot
+                sender_id, 
+                content,
+                sender_name
+            )
 
         # NOTE: on_deleted_messages does NOT work for private chats in Telegram!
         # Telegram API doesn't send deletion events for 1-on-1 chats.
@@ -1079,8 +1097,8 @@ async def main():
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_morning_brief, "cron", hour=8, minute=0)
-    scheduler.add_job(database.cleanup_old_messages, "cron", hour=4, minute=0) # Kept original cleanup_old_messages as database method
-    scheduler.add_job(check_deleted_messages, "interval", minutes=2) # Kept original check_deleted_messages interval
+    # database.cleanup_old_messages removed as it is not implemented
+    scheduler.add_job(check_deleted_messages, "interval", minutes=1)
     scheduler.add_job(check_habit_reminders, "cron", second=0) # Run every minute at 00 seconds
     scheduler.start()
     

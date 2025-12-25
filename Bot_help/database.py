@@ -58,6 +58,26 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+        
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cached_messages (
+            message_id INTEGER,
+            chat_id INTEGER,
+            user_id INTEGER,
+            sender_id INTEGER,
+            content TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sender_name TEXT,
+            PRIMARY KEY (message_id, chat_id)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            user_id INTEGER PRIMARY KEY,
+            session_string TEXT
+        )
+    """)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS habit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -297,36 +317,32 @@ def delete_user_session(user_id: int):
     conn.commit()
     conn.close()
 
-def get_unchecked_messages(limit: int = 50):
-    """Get unchecked messages from last 24 hours"""
+def cache_message(message_id, chat_id, user_id, sender_id, content, sender_name):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT message_id, chat_id, user_id, text 
-        FROM message_cache 
-        WHERE checked = 0 
-        AND timestamp > datetime('now', '-1 day')
-        ORDER BY timestamp DESC 
-        LIMIT ?
-    """, (limit,))
+    cursor.execute("INSERT OR REPLACE INTO cached_messages (message_id, chat_id, user_id, sender_id, content, sender_name) VALUES (?, ?, ?, ?, ?, ?)",
+                   (message_id, chat_id, user_id, sender_id, content, sender_name))
+    conn.commit()
+    conn.close()
+
+def get_messages_for_check(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT message_id, chat_id, sender_id, content, sender_name FROM cached_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def mark_message_checked(message_id: int, chat_id: int):
-    """Mark message as checked"""
+def delete_cached_message(message_id, chat_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("UPDATE message_cache SET checked = 1 WHERE message_id = ? AND chat_id = ?", 
-                   (message_id, chat_id))
+    cursor.execute("DELETE FROM cached_messages WHERE message_id = ? AND chat_id = ?", (message_id, chat_id))
     conn.commit()
     conn.close()
 
-def delete_cached_message(message_id: int, chat_id: int):
-    """Delete message from cache (when confirmed deleted)"""
+def save_user_session(user_id, session_string):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM message_cache WHERE message_id = ? AND chat_id = ?", 
-                   (message_id, chat_id))
+    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, session_string) VALUES (?, ?)", (user_id, session_string))
     conn.commit()
     conn.close()
