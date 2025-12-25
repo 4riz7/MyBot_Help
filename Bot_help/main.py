@@ -678,7 +678,10 @@ async def check_temp_mail(callback: types.CallbackQuery):
             # Show messages
             text = f"📬 <b>Входящие ({len(messages)}):</b>\n\n"
             for msg in messages[:5]:
-                text += f"🔹 <b>От:</b> {msg['from']['address']}\n<b>Тема:</b> {msg['subject']}\n\n"
+                sender = msg['from']['address']
+                subject = msg['subject']
+                intro = msg.get('intro', 'Empty body')
+                text += f"🔹 <b>От:</b> {sender}\n<b>Тема:</b> {subject}\n<b>Текст:</b> {intro}\n\n"
             
             await callback.message.answer(text, parse_mode="HTML")
             await callback.answer()
