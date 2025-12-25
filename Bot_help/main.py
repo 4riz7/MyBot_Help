@@ -117,7 +117,6 @@ async def check_deleted_messages():
             # Check each chat
             for chat_id, messages_dict in chats_to_check.items():
                 msg_ids = list(messages_dict.keys())
-                logging.debug(f"🔍 Checking {len(msg_ids)} msgs in chat {chat_id} for user {user_id}")
                 try:
                     # Batch request to Telegram
                     current_messages = await client.get_messages(chat_id, msg_ids)
@@ -223,7 +222,6 @@ class UserBotManager:
                 content,
                 sender_name
             )
-            logging.info(f"📥 Cached message {message.id} from {sender_name} (Chat: {message.chat.id})")
 
         # NOTE: on_deleted_messages does NOT work for private chats in Telegram!
         # Telegram API doesn't send deletion events for 1-on-1 chats.
