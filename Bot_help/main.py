@@ -106,17 +106,20 @@ async def check_deleted_messages():
                 continue
                 
             # Group by chat_id to batch requests
-            # {chat_id: {msg_id: (content, sname, sid, mtype, fid)}}
+            # {chat_id: {msg_id: (content, sname, sid, mtype, fid, s_username)}}
             chats_to_check = {}
             for row in cached_msgs:
-                if len(row) == 7: # Compatibility helper
+                if len(row) == 8: # Compatibility helper with username
+                    mid, cid, sid, content, sname, mtype, fid, s_username = row
+                elif len(row) == 7: # Old compat
                     mid, cid, sid, content, sname, mtype, fid = row
+                    s_username = None
                 else:
                     mid, cid, sid, content, sname = row
-                    mtype, fid = None, None
+                    mtype, fid, s_username = None, None, None
                     
                 if cid not in chats_to_check: chats_to_check[cid] = {}
-                chats_to_check[cid][mid] = (content, sname, sid, mtype, fid)
+                chats_to_check[cid][mid] = (content, sname, sid, mtype, fid, s_username)
 
             # Check each chat
             for chat_id, messages_dict in chats_to_check.items():
@@ -133,7 +136,7 @@ async def check_deleted_messages():
                     for i, msg_obj in enumerate(current_messages):
                         original_msg_id = msg_ids[i]
                         # unpack cached data
-                        content, sname, sid, mtype, fid = messages_dict[original_msg_id]
+                        content, sname, sid, mtype, fid, s_username = messages_dict[original_msg_id]
                         
                         is_deleted = False
                         if msg_obj is None: is_deleted = True
@@ -141,9 +144,10 @@ async def check_deleted_messages():
                         
                         if is_deleted:
                             # Notify user via main bot
+                            username_text = f"(@{s_username})\n" if s_username else ""
                             alert_text = (
                                 f"🗑 **Удаленное сообщение!**\n"
-                                f"👤 От: {sname}\n"
+                                f"👤 От: {sname} {username_text}"
                                 f"💬 Текст: {content}\n"
                             )
                             
@@ -255,6 +259,7 @@ class UserBotManager:
 
             sender_id = message.from_user.id if message.from_user else 0
             sender_name = message.from_user.first_name if message.from_user else "Unknown"
+            sender_username = message.from_user.username if message.from_user and message.from_user.username else None
             
             database.cache_message(
                 message.id, 
@@ -264,7 +269,8 @@ class UserBotManager:
                 content,
                 sender_name,
                 media_type,
-                file_id
+                file_id,
+                sender_username
             )
 
         # NOTE: on_deleted_messages does NOT work for private chats in Telegram!

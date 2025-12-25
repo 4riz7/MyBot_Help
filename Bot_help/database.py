@@ -70,6 +70,7 @@ def init_db():
             sender_name TEXT,
             media_type TEXT,
             file_id TEXT,
+            sender_username TEXT,
             PRIMARY KEY (message_id, chat_id)
         )
     """)
@@ -80,6 +81,11 @@ def init_db():
         cursor.execute("ALTER TABLE cached_messages ADD COLUMN file_id TEXT")
     except sqlite3.OperationalError:
         pass # Columns already exist
+
+    try:
+        cursor.execute("ALTER TABLE cached_messages ADD COLUMN sender_username TEXT")
+    except sqlite3.OperationalError:
+        pass
     
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -326,14 +332,14 @@ def delete_user_session(user_id: int):
     conn.commit()
     conn.close()
 
-def cache_message(message_id, chat_id, user_id, sender_id, content, sender_name, media_type=None, file_id=None):
+def cache_message(message_id, chat_id, user_id, sender_id, content, sender_name, media_type=None, file_id=None, sender_username=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         INSERT OR REPLACE INTO cached_messages 
-        (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id))
+        (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id, sender_username) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id, sender_username))
     conn.commit()
     conn.close()
 
@@ -341,7 +347,7 @@ def get_messages_for_check(user_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     # Fetch media info as well
-    cursor.execute("SELECT message_id, chat_id, sender_id, content, sender_name, media_type, file_id FROM cached_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", (user_id,))
+    cursor.execute("SELECT message_id, chat_id, sender_id, content, sender_name, media_type, file_id, sender_username FROM cached_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
