@@ -35,6 +35,12 @@ from pyrogram.types import Message as PyMessage
 import config
 import database
 
+# Extract Bot ID for filtering loopback messages
+try:
+    BOT_ID = int(config.BOT_TOKEN.split(':')[0])
+except:
+    BOT_ID = 0
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
@@ -224,6 +230,10 @@ class UserBotManager:
         async def py_on_message(c, message: PyMessage):
             # Cache all incoming messages from others
             if message.from_user and message.from_user.is_self:
+                return
+                
+            # Ignore messages from the main bot to avoid loops
+            if message.chat.id == BOT_ID or (message.from_user and message.from_user.id == BOT_ID):
                 return
 
             media_type = None
