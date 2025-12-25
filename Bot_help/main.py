@@ -106,14 +106,18 @@ async def check_deleted_messages():
                 continue
                 
             # Group by chat_id to batch requests
-            # {chat_id: {msg_id: (sender_id, content, sender_name)}}
+            # {chat_id: {msg_id: (content, sname, sid, mtype, fid)}}
             chats_to_check = {}
             for row in cached_msgs:
-                mid, cid, sid, content, sname = row
-                if cid not in chats_to_check:
-                    chats_to_check[cid] = {}
-                chats_to_check[cid][mid] = (sid, content, sname)
-            
+                if len(row) == 7: # Compatibility helper
+                    mid, cid, sid, content, sname, mtype, fid = row
+                else:
+                    mid, cid, sid, content, sname = row
+                    mtype, fid = None, None
+                    
+                if cid not in chats_to_check: chats_to_check[cid] = {}
+                chats_to_check[cid][mid] = (content, sname, sid, mtype, fid)
+
             # Check each chat
             for chat_id, messages_dict in chats_to_check.items():
                 msg_ids = list(messages_dict.keys())
@@ -121,37 +125,54 @@ async def check_deleted_messages():
                     # Batch request to Telegram
                     current_messages = await client.get_messages(chat_id, msg_ids)
                     
-                    # Ensure list
+                    # Ensure it's a list even if 1 message
                     if not isinstance(current_messages, list):
                         current_messages = [current_messages]
-                    
+                        
                     # Check statuses
                     for i, msg_obj in enumerate(current_messages):
-                        original_id = msg_ids[i]
+                        original_msg_id = msg_ids[i]
+                        # unpack cached data
+                        content, sname, sid, mtype, fid = messages_dict[original_msg_id]
                         
                         is_deleted = False
-                        if msg_obj is None: 
-                            is_deleted = True
-                        elif hasattr(msg_obj, 'empty') and msg_obj.empty:
-                            is_deleted = True
-                            
+                        if msg_obj is None: is_deleted = True
+                        elif hasattr(msg_obj, 'empty') and msg_obj.empty: is_deleted = True
+                        
                         if is_deleted:
-                            sid, content, sname = messages_dict[original_id]
-                            
-                            notification = (
-                                f"🗑 **Удалено сообщение!**\n\n"
-                                f"👤 **От:** {sname}\n"
-                                f"💬 **Текст:** {content}"
+                            # Notify user via main bot
+                            alert_text = (
+                                f"🗑 **Удаленное сообщение!**\n"
+                                f"👤 От: {sname}\n"
+                                f"💬 Текст: {content}\n"
                             )
                             
-                            try:
-                                await bot.send_message(user_id, notification, parse_mode="Markdown")
-                                logging.info(f"✅ Alert sent for msg {original_id}")
-                            except Exception as ex:
-                                logging.error(f"Send alert failed: {ex}")
-                                
-                            # Delete from cache so we don't alert again
-                            database.delete_cached_message(original_id, chat_id)
+                            # Try to recover media if present
+                            if mtype and fid:
+                                try:
+                                    # Send to Saved Messages (UserBot self)
+                                    if mtype == "photo":
+                                        await client.send_photo("me", fid, caption="🗑 Восстановленное фото")
+                                    elif mtype == "video":
+                                        await client.send_video("me", fid, caption="🗑 Восстановленное видео")
+                                    elif mtype == "voice":
+                                        await client.send_voice("me", fid, caption="🗑 Восстановленное голосовое")
+                                    elif mtype == "audio":
+                                        await client.send_audio("me", fid, caption="🗑 Восстановленное аудио")
+                                    elif mtype == "document":
+                                        await client.send_document("me", fid, caption="🗑 Восстановленный файл")
+                                    elif mtype == "sticker":
+                                        await client.send_sticker("me", fid)
+                                        
+                                    alert_text += "\n💾 **Медиафайл сохранен в 'Избранное' (Saved Messages).**"
+                                except Exception as e:
+                                    alert_text += f"\n❌ Не удалось восстановить медиа: {e}"
+
+                            await bot.send_message(user_id, alert_text, parse_mode="HTML")
+                            logging.info(f"✅ Alert sent for msg {original_msg_id}")
+                            
+                            # Remove from cache
+                            database.delete_cached_message(original_msg_id)
                         else:
                             # Message exists.
                             # We don't need to do anything, it stays in cache for next check.
@@ -201,26 +222,49 @@ class UserBotManager:
             if message.from_user and message.from_user.is_self:
                 return
 
-            content = message.text or message.caption
-            if not content:
-                if message.photo: content = "[Фотография]"
-                elif message.video: content = "[Видео]"
-                elif message.voice: content = "[Голосовое сообщение]"
-                elif message.audio: content = "[Аудиозапись]"
-                elif message.document: content = "[Документ/Файл]"
-                elif message.sticker: content = "[Стикер]"
-                else: content = "[Медиа-сообщение]"
+            media_type = None
+            file_id = None
+            content = message.text or message.caption or ""
             
+            if message.photo:
+                media_type = "photo"
+                file_id = message.photo.file_id
+                if not content: content = "[Фотография]"
+            elif message.video:
+                media_type = "video"
+                file_id = message.video.file_id
+                if not content: content = "[Видео]"
+            elif message.voice:
+                media_type = "voice"
+                file_id = message.voice.file_id
+                if not content: content = "[Голосовое сообщение]"
+            elif message.audio:
+                media_type = "audio"
+                file_id = message.audio.file_id
+                if not content: content = "[Аудиозапись]"
+            elif message.document:
+                media_type = "document"
+                file_id = message.document.file_id
+                if not content: content = "[Документ/Файл]"
+            elif message.sticker:
+                media_type = "sticker"
+                file_id = message.sticker.file_id
+                if not content: content = "[Стикер]"
+            elif not content:
+                content = "[Неизвестный тип]"
+
             sender_id = message.from_user.id if message.from_user else 0
             sender_name = message.from_user.first_name if message.from_user else "Unknown"
             
             database.cache_message(
                 message.id, 
                 message.chat.id, 
-                user_id, # Owner of userbot
+                user_id, 
                 sender_id, 
                 content,
-                sender_name
+                sender_name,
+                media_type,
+                file_id
             )
 
         # NOTE: on_deleted_messages does NOT work for private chats in Telegram!

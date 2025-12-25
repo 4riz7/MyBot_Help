@@ -68,9 +68,18 @@ def init_db():
             content TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             sender_name TEXT,
+            media_type TEXT,
+            file_id TEXT,
             PRIMARY KEY (message_id, chat_id)
         )
     """)
+    
+    # Migration for new columns
+    try:
+        cursor.execute("ALTER TABLE cached_messages ADD COLUMN media_type TEXT")
+        cursor.execute("ALTER TABLE cached_messages ADD COLUMN file_id TEXT")
+    except sqlite3.OperationalError:
+        pass # Columns already exist
     
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_sessions (
@@ -317,18 +326,22 @@ def delete_user_session(user_id: int):
     conn.commit()
     conn.close()
 
-def cache_message(message_id, chat_id, user_id, sender_id, content, sender_name):
+def cache_message(message_id, chat_id, user_id, sender_id, content, sender_name, media_type=None, file_id=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO cached_messages (message_id, chat_id, user_id, sender_id, content, sender_name) VALUES (?, ?, ?, ?, ?, ?)",
-                   (message_id, chat_id, user_id, sender_id, content, sender_name))
+    cursor.execute("""
+        INSERT OR REPLACE INTO cached_messages 
+        (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (message_id, chat_id, user_id, sender_id, content, sender_name, media_type, file_id))
     conn.commit()
     conn.close()
 
 def get_messages_for_check(user_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT message_id, chat_id, sender_id, content, sender_name FROM cached_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", (user_id,))
+    # Fetch media info as well
+    cursor.execute("SELECT message_id, chat_id, sender_id, content, sender_name, media_type, file_id FROM cached_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT 100", (user_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
