@@ -983,21 +983,25 @@ async def process_ub_connect(callback: types.CallbackQuery, state: FSMContext):
     # Instead of interactive login (which fails due to IP/timeouts), ask for session string
     await callback.message.edit_text(
         "🔐 **Авторизация UserBot**\n\n"
-        "Из-за защиты Telegram авторизация по коду часто не работает на серверах. "
-        "Самый надежный способ — создать сессию вручную.\n\n"
-        "1. Запустите этот Python скрипт на своем ПК/телефоне (не на сервере!):\n"
+        "1. Перейдите на [my.telegram.org](https://my.telegram.org), залогиньтесь и выберите 'API development tools'.\n"
+        "2. Создайте новое приложение (любое название), скопируйте `App api_id` и `App api_hash`.\n"
+        "3. Вставьте их в скрипт ниже и запустите на своем ПК (не на сервере!):\n"
         "```python\n"
         "from pyrogram import Client\n"
         "async def main():\n"
-        f"    app = Client('my_account', api_id={config.API_ID}, api_hash='{config.API_HASH}', in_memory=True)\n"
+        "    # Вставьте свои данные ниже:\n"
+        "    api_id = 123456 \n"
+        "    api_hash = 'ваша_хэш_строка'\n"
+        "    \n"
+        "    app = Client('my_account', api_id=api_id, api_hash=api_hash, in_memory=True)\n"
         "    await app.start()\n"
         "    print(await app.export_session_string())\n"
         "    await app.stop()\n"
         "\n"
         "import asyncio; asyncio.run(main())\n"
         "```\n"
-        "2. Скопируйте полученную длинную строку.\n"
-        "3. Отправьте её мне боту в ответном сообщении.",
+        "4. Скопируйте полученную длинную строку.\n"
+        "5. Отправьте её мне боту в ответном сообщении.",
         parse_mode="Markdown"
     )
     await state.set_state(UserBotStates.waiting_for_session_string)
