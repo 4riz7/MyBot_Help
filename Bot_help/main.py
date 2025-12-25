@@ -6,7 +6,7 @@ import httpx
 import json
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F, BaseMiddleware
-from aiogram.filters import Command, CommandObject, ChatMemberUpdatedFilter, JOIN_TRANSITION
+from aiogram.filters import Command, CommandObject, ChatMemberUpdatedFilter, JOIN_TRANSITION, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton, ChatMemberUpdated, WebAppInfo
