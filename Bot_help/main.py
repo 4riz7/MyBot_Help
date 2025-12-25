@@ -961,14 +961,15 @@ async def cmd_userbot(message: types.Message, state: FSMContext):
         await message.answer("✅ У вас уже подключен UserBot для отслеживания удаленных сообщений.", reply_markup=kb)
         return
 
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔑 Подключить", callback_data="ub_connect")]])
     await message.answer(
         "🕵️ **Настройка UserBot**\n\n"
         "Эта функция позволит мне видеть удаленные сообщения в ваших личных диалогах.\n"
         "Для этого мне нужно временно авторизоваться под вашим аккаунтом.\n\n"
-        "Введите ваш номер телефона в международном формате (например: `+79991234567`):",
+        "Нажмите кнопку ниже, чтобы начать подключение.",
+        reply_markup=kb,
         parse_mode="Markdown"
     )
-    await state.set_state(UserBotStates.waiting_for_phone)
 
 @dp.callback_query(F.data == "ub_stop")
 async def process_ub_stop(callback: types.CallbackQuery):
