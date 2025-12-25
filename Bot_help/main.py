@@ -646,7 +646,9 @@ async def send_expense_chart(message: types.Message):
         text += f"\n💰 <b>Всего:</b> {total:.0f}₽"
         
         await message.answer(text, parse_mode="HTML")
-    await message.answer("Не удалось получить статистику.")
+    except Exception as e:
+        logging.error(f"Stats Error: {e}")
+        await message.answer("Не удалось получить статистику.")
 
 async def get_weather(lat=None, lon=None, city_name=None):
     if not config.WEATHER_API_KEY:
