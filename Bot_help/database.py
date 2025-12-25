@@ -141,6 +141,13 @@ def add_expense(user_id: int, amount: float, category: str):
     conn.commit()
     conn.close()
 
+def delete_expenses_by_category(user_id: int, category: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM expenses WHERE user_id = ? AND category = ?", (user_id, category))
+    conn.commit()
+    conn.close()
+
 def get_expenses(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

@@ -318,6 +318,9 @@ async def handle_webapp_data(message: types.Message):
         elif action == 'get_stats':
             await send_expense_chart(message)
 
+        elif action == 'manage_categories':
+            await send_delete_categories_menu(message)
+
     except Exception as e:
         logging.error(f"WebApp Error: {e}")
         await message.answer("Ошибка при обработке данных из приложения.")
@@ -423,6 +426,13 @@ async def cmd_note(message: types.Message, command: CommandObject):
     database.add_note(message.from_user.id, command.args)
     await message.answer("📝 Заметка сохранена!")
 
+@dp.message(F.text == "🧹 Очистить чат")
+@dp.message(Command("clear_ai"))
+async def cmd_clear_ai(message: types.Message):
+    # Currently context is not stored persistently, but if we add memory later, clear it here.
+    # For now, we just inform the user.
+    await message.answer("🧹 Контекст общения с ИИ очищен! Я забыл всё, о чем мы говорили (кроме ваших заметок).")
+
 # Reminder feature
 async def send_reminder(user_id: int, text: str):
     try:
@@ -458,6 +468,48 @@ async def cmd_remind(message: types.Message, command: CommandObject):
         await message.answer(f"Ок! Напомню в {time_str}: {reminder_text}")
     except ValueError:
         await message.answer("Ошибка формата. Пример: /remind 14:00 Сходить в магазин")
+
+# Manage Categories
+async def send_delete_categories_menu(message: types.Message):
+    user_id = message.from_user.id
+    try:
+        conn = database.sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT category FROM expenses WHERE user_id = ?", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            await message.answer("У вас пока нет расходов и категорий.")
+            return
+
+        categories = sorted([row[0] for row in rows])
+        
+        builder = InlineKeyboardMarkup(inline_keyboard=[])
+        buttons = []
+        for cat in categories:
+            buttons.append([InlineKeyboardButton(text=f"❌ {cat}", callback_data=f"del_cat_{cat}")])
+        
+        buttons.append([InlineKeyboardButton(text="Отмена", callback_data="cancel_del_cat")])
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+        await message.answer("Выберите категорию для удаления (все расходы в ней будут удалены!):", reply_markup=kb)
+        
+    except Exception as e:
+        logging.error(f"Cat Menu Error: {e}")
+        await message.answer("Ошибка списка категорий.")
+
+@dp.callback_query(F.data.startswith("del_cat_"))
+async def process_delete_category(callback: types.CallbackQuery):
+    category = callback.data.replace("del_cat_", "")
+    database.delete_expenses_by_category(callback.from_user.id, category)
+    await callback.answer(f"Категория '{category}' и все расходы удалены.")
+    await callback.message.edit_text(f"✅ Категория **{category}** удалена.", parse_mode="Markdown")
+
+@dp.callback_query(F.data == "cancel_del_cat")
+async def process_cancel_delete_cat(callback: types.CallbackQuery):
+    await callback.message.delete()
+    await callback.answer()
 
 # Daily Morning Brief
 async def send_expense_chart(message: types.Message):
