@@ -345,16 +345,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         reply_markup=get_main_menu()
     )
 
-@dp.message(SettingsStates.waiting_for_city)
-async def process_city_setup(message: types.Message, state: FSMContext):
-    city = message.text.strip()
-    database.update_user_city(message.from_user.id, city)
-    await message.answer(
-        f"✅ Отлично! Город {city} сохранен.\n"
-        "Теперь ты можешь пользоваться всеми функциями:",
-        reply_markup=get_main_menu()
-    )
-    await state.clear()
+
 
 # WebApp Data Handler
 @dp.message(F.content_type == types.ContentType.WEB_APP_DATA)
@@ -406,13 +397,8 @@ async def handle_webapp_data(message: types.Message):
         logging.error(f"WebApp Error: {e}")
         await message.answer("Ошибка при обработке данных из приложения.")
 
-@dp.message(F.text == "🏙 Сменить город")
-async def cmd_change_city(message: types.Message, state: FSMContext):
-    await message.answer("Введите название нового города:")
-    await state.set_state(SettingsStates.waiting_for_city)
-
-@dp.message(Command("help"))
 @dp.message(F.text == "❓ Помощь")
+@dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     help_text = (
         "🤖 **Что я умею:**\n\n"
@@ -552,8 +538,13 @@ async def cmd_remind(message: types.Message, command: CommandObject):
 
 # Manage Categories
 # Manage Categories
-async def send_delete_categories_menu(message: types.Message):
-    user_id = message.from_user.id
+async def send_delete_categories_menu(message: types.Message, user_id: int = None):
+    if user_id is None:
+        user_id = message.from_user.id
+        # In private chat with bot, user_id is chat.id
+        if message.from_user.is_bot:
+            user_id = message.chat.id
+
     try:
         categories = database.get_categories(user_id)
         
@@ -616,12 +607,21 @@ async def process_new_category(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "fin_del_cat_menu")
 async def cb_fin_del_cat_menu(callback: types.CallbackQuery):
-    await send_delete_categories_menu(callback.message)
+    # Pass explicit user_id because callback.message.from_user is the bot
+    await send_delete_categories_menu(callback.message, user_id=callback.from_user.id)
     await callback.answer()
 
 # Daily Morning Brief
 async def send_expense_chart(message: types.Message):
+    # If message is from bot (callback), use chat.id as user_id approximation or handle better
+    # But usually send_expense_chart is called with user message or we need to pass user_id
+    
+    # Check if message is from bot
     user_id = message.from_user.id
+    if message.from_user.is_bot:
+         # In private chat, chat.id is user_id
+         user_id = message.chat.id
+         
     try:
         conn = database.sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
