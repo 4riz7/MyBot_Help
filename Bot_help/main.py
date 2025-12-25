@@ -176,7 +176,7 @@ async def check_deleted_messages():
                             logging.info(f"✅ Alert sent for msg {original_msg_id}")
                             
                             # Remove from cache
-                            database.delete_cached_message(original_msg_id)
+                            database.delete_cached_message(original_msg_id, chat_id)
                         else:
                             # Message exists.
                             # We don't need to do anything, it stays in cache for next check.
@@ -1154,7 +1154,7 @@ async def main():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_morning_brief, "cron", hour=8, minute=0)
     # database.cleanup_old_messages removed as it is not implemented
-    scheduler.add_job(check_deleted_messages, "interval", minutes=1)
+    scheduler.add_job(check_deleted_messages, "interval", seconds=30)
     scheduler.add_job(check_habit_reminders, "cron", second=0) # Run every minute at 00 seconds
     scheduler.start()
     
