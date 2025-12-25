@@ -603,55 +603,73 @@ async def process_habit_log(callback: types.CallbackQuery):
     database.log_habit(habit_id, callback.from_user.id, today)
     await callback.answer("Отлично! Засчитано.")
 
-# --- TEMPORARY MAIL ---
+# --- TEMPORARY MAIL (Mail.tm API) ---
 @dp.message(F.text == "📧 Временная почта")
 async def cmd_temp_mail(message: types.Message):
-    # User-Agent to avoid blocking
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    # 1. Get Domain
+    # 2. Create Account
     try:
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, headers=headers) as client:
-            resp = await client.get("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1")
+        async with httpx.AsyncClient() as client:
+            # Get domains
+            resp = await client.get("https://api.mail.tm/domains")
+            if resp.status_code != 200: raise Exception("Domains error")
+            domain_data = resp.json()['hydra:member'][0]['domain']
             
-            if resp.status_code != 200:
-                await message.answer(f"Сервис почты недоступен (код {resp.status_code}). Попробуйте позже.")
-                return
-
-            email = resp.json()[0]
+            # Generate credentials
+            import random, string
+            username = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+            password = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+            email = f"{username}@{domain_data}"
             
+            # Create account
+            reg_resp = await client.post("https://api.mail.tm/accounts", json={
+                "address": email,
+                "password": password
+            })
+            
+            if reg_resp.status_code != 201:
+                raise Exception(f"Registration failed: {reg_resp.text}")
+            
+            # Provide button with password embedded (to get token later)
+            # Format: check_mail_email:password
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📬 Проверить входящие", callback_data=f"check_mail_{email}")]
+                [InlineKeyboardButton(text="📬 Проверить входящие", callback_data=f"check_mail_{email}:{password}")]
             ])
             
             await message.answer(
                 f"📧 <b>Ваш временный адрес:</b>\n`{email}`\n\n"
-                "Нажмите кнопку ниже, чтобы проверить новые письма. Почта живет около часа.",
+                "Нажмите кнопку ниже, чтобы проверить новые письма.",
                 parse_mode="HTML",
                 reply_markup=kb
             )
     except Exception as e:
         logging.error(f"Temp mail error: {e}")
-        await message.answer(f"Ошибка при создании почты: {e}")
+        await message.answer(f"Ошибка сервиса почты: {e}")
 
 @dp.callback_query(F.data.startswith("check_mail_"))
 async def check_temp_mail(callback: types.CallbackQuery):
-    email = callback.data.split("_")[2]
-    login, domain = email.split("@")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    # Format: check_mail_email:password
+    data = callback.data.replace("check_mail_", "")
+    email, password = data.split(":")
     
     try:
-        async with httpx.AsyncClient(verify=False, follow_redirects=True, headers=headers) as client:
-            url = f"https://www.1secmail.com/api/v1/?action=getMessages&login={login}&domain={domain}"
-            resp = await client.get(url)
+        async with httpx.AsyncClient() as client:
+            # Get Token
+            token_resp = await client.post("https://api.mail.tm/token", json={
+                "address": email,
+                "password": password
+            })
             
-            try:
-                messages = resp.json()
-            except json.JSONDecodeError:
-                 await callback.answer("Ошибка ответа сервера почты.", show_alert=True)
-                 return
+            if token_resp.status_code != 200:
+                await callback.answer("Ошибка авторизации почты.", show_alert=True)
+                return
+                
+            token = token_resp.json()['token']
+            headers = {"Authorization": f"Bearer {token}"}
+            
+            # Get Messages
+            msgs_resp = await client.get("https://api.mail.tm/messages", headers=headers)
+            messages = msgs_resp.json()['hydra:member']
             
             if not messages:
                 await callback.answer("📭 Входящих писем нет.", show_alert=True)
@@ -660,7 +678,7 @@ async def check_temp_mail(callback: types.CallbackQuery):
             # Show messages
             text = f"📬 <b>Входящие ({len(messages)}):</b>\n\n"
             for msg in messages[:5]:
-                text += f"🔹 <b>От:</b> {msg['from']}\n<b>Тема:</b> {msg['subject']}\n\n"
+                text += f"🔹 <b>От:</b> {msg['from']['address']}\n<b>Тема:</b> {msg['subject']}\n\n"
             
             await callback.message.answer(text, parse_mode="HTML")
             await callback.answer()
