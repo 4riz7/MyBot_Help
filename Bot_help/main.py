@@ -989,7 +989,7 @@ async def process_ub_connect(callback: types.CallbackQuery, state: FSMContext):
         "```python\n"
         "from pyrogram import Client\n"
         "async def main():\n"
-        "    app = Client('my_account', api_id=YourID, api_hash='YourHash', in_memory=True)\n"
+        f"    app = Client('my_account', api_id={config.API_ID}, api_hash='{config.API_HASH}', in_memory=True)\n"
         "    await app.start()\n"
         "    print(await app.export_session_string())\n"
         "    await app.stop()\n"
