@@ -608,7 +608,7 @@ async def process_habit_log(callback: types.CallbackQuery):
 async def cmd_temp_mail(message: types.Message):
     # Generate random email using 1secmail
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=False) as client:
             resp = await client.get("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1")
             email = resp.json()[0]
             
@@ -624,7 +624,7 @@ async def cmd_temp_mail(message: types.Message):
             )
     except Exception as e:
         logging.error(f"Temp mail error: {e}")
-        await message.answer("Ошибка при создании почты.")
+        await message.answer(f"Ошибка при создании почты: {e}")
 
 @dp.callback_query(F.data.startswith("check_mail_"))
 async def check_temp_mail(callback: types.CallbackQuery):
@@ -632,7 +632,7 @@ async def check_temp_mail(callback: types.CallbackQuery):
     login, domain = email.split("@")
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=False) as client:
             url = f"https://www.1secmail.com/api/v1/?action=getMessages&login={login}&domain={domain}"
             resp = await client.get(url)
             messages = resp.json()
@@ -657,28 +657,37 @@ async def check_temp_mail(callback: types.CallbackQuery):
 @dp.message(F.text.regexp(r'https?://(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/'))
 async def download_media(message: types.Message):
     url = re.search(r'https?://[^\s]+', message.text).group(0)
-    await message.answer("⏳ Начинаю загрузку видео, это может занять минуту...")
+    msg = await message.answer("⏳ Скачиваю... (ищу качество до 50 МБ)")
     
+    # Try to find format < 50MB
     ydl_opts = {
-        'format': 'best',
+        'format': 'best[filesize<50M]/best[height<=480]/worst', # Try to fit in Telegram limit
         'outtmpl': 'downloads/%(id)s.%(ext)s',
-        'max_filesize': 50000000, # 50MB
+        'noplaylist': True
     }
     
     try:
+        # Check downloader
         if not os.path.exists('downloads'):
             os.makedirs('downloads')
             
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+        # Run in thread not to block
+        loop = asyncio.get_event_loop()
+        
+        def run_download():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return ydl.prepare_filename(info)
+        
+        filename = await loop.run_in_executor(None, run_download)
             
         video = FSInputFile(filename)
-        await message.answer_video(video, caption="Вот твое видео!")
+        await message.answer_video(video, caption="📹 Вот видео!")
         os.remove(filename)
+        await msg.delete()
     except Exception as e:
         logging.error(f"Download Error: {e}")
-        await message.answer("❌ Не удалось скачать видео. Возможно, оно слишком тяжелое или ссылка не поддерживается.")
+        await msg.edit_text("❌ Видео слишком большое (Telegram принимает до 50 МБ) или возникла ошибка.")
 
 # Summarizer (Articles)
 @dp.message(F.text.regexp(r'https?://(?!www\.youtube|youtu\.be|tiktok\.com|instagram\.com)[^\s]+'))
