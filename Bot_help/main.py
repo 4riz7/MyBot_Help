@@ -637,7 +637,7 @@ async def cmd_temp_mail(message: types.Message):
             ])
             
             await message.answer(
-                f"📧 <b>Ваш временный адрес:</b>\n`{email}`\n\n"
+                f"📧 <b>Ваш временный адрес:</b>\n<code>{email}</code>\n\n"
                 "Нажмите кнопку ниже, чтобы проверить новые письма.",
                 parse_mode="HTML",
                 reply_markup=kb
