@@ -247,7 +247,8 @@ def get_main_menu():
     # Only one button for the app
     url = config.WEBAPP_URL if hasattr(config, 'WEBAPP_URL') else "https://google.com"
     kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))]
+        [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))],
+        [KeyboardButton(text="📧 Временная почта")]
     ], resize_keyboard=True)
     return kb
 
@@ -601,6 +602,56 @@ async def process_habit_log(callback: types.CallbackQuery):
     today = datetime.now().date().isoformat()
     database.log_habit(habit_id, callback.from_user.id, today)
     await callback.answer("Отлично! Засчитано.")
+
+# --- TEMPORARY MAIL ---
+@dp.message(F.text == "📧 Временная почта")
+async def cmd_temp_mail(message: types.Message):
+    # Generate random email using 1secmail
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("https://www.1secmail.com/api/v1/?action=genRandomMailbox&count=1")
+            email = resp.json()[0]
+            
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📬 Проверить входящие", callback_data=f"check_mail_{email}")]
+            ])
+            
+            await message.answer(
+                f"📧 <b>Ваш временный адрес:</b>\n`{email}`\n\n"
+                "Нажмите кнопку ниже, чтобы проверить новые письма. Почта живет около часа.",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+    except Exception as e:
+        logging.error(f"Temp mail error: {e}")
+        await message.answer("Ошибка при создании почты.")
+
+@dp.callback_query(F.data.startswith("check_mail_"))
+async def check_temp_mail(callback: types.CallbackQuery):
+    email = callback.data.split("_")[2]
+    login, domain = email.split("@")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            url = f"https://www.1secmail.com/api/v1/?action=getMessages&login={login}&domain={domain}"
+            resp = await client.get(url)
+            messages = resp.json()
+            
+            if not messages:
+                await callback.answer("📭 Входящих писем нет.", show_alert=True)
+                return
+            
+            # Show messages
+            text = f"📬 <b>Входящие ({len(messages)}):</b>\n\n"
+            for msg in messages[:5]:
+                text += f"🔹 <b>От:</b> {msg['from']}\n<b>Тема:</b> {msg['subject']}\n\n"
+            
+            await callback.message.answer(text, parse_mode="HTML")
+            await callback.answer()
+            
+    except Exception as e:
+        logging.error(f"Check mail error: {e}")
+        await callback.answer("Ошибка проверки почты.", show_alert=True)
 
 # Media Downloader (yt-dlp)
 @dp.message(F.text.regexp(r'https?://(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/'))
