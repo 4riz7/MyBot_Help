@@ -206,6 +206,7 @@ class UserBotStates(StatesGroup):
 
 class SettingsStates(StatesGroup):
     waiting_for_city = State()
+    waiting_for_category = State()
 
 # --- UserBot Manager ---
 
@@ -327,7 +328,8 @@ def get_main_menu():
     url = config.WEBAPP_URL if hasattr(config, 'WEBAPP_URL') else "https://google.com"
     kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))],
-        [KeyboardButton(text="📧 Временная почта"), KeyboardButton(text="🌦 Погода")]
+        [KeyboardButton(text="📧 Временная почта"), KeyboardButton(text="🌦 Погода")],
+        [KeyboardButton(text="💰 Финансы")]
     ], resize_keyboard=True)
     return kb
 
@@ -549,22 +551,16 @@ async def cmd_remind(message: types.Message, command: CommandObject):
         await message.answer("Ошибка формата. Пример: /remind 14:00 Сходить в магазин")
 
 # Manage Categories
+# Manage Categories
 async def send_delete_categories_menu(message: types.Message):
     user_id = message.from_user.id
     try:
-        conn = database.sqlite3.connect(database.DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT category FROM expenses WHERE user_id = ?", (user_id,))
-        rows = cursor.fetchall()
-        conn.close()
+        categories = database.get_categories(user_id)
         
-        if not rows:
-            await message.answer("У вас пока нет расходов и категорий.")
+        if not categories:
+            await message.answer("У вас пока нет категорий.")
             return
 
-        categories = sorted([row[0] for row in rows])
-        
-        builder = InlineKeyboardMarkup(inline_keyboard=[])
         buttons = []
         for cat in categories:
             buttons.append([InlineKeyboardButton(text=f"❌ {cat}", callback_data=f"del_cat_{cat}")])
@@ -588,6 +584,39 @@ async def process_delete_category(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "cancel_del_cat")
 async def process_cancel_delete_cat(callback: types.CallbackQuery):
     await callback.message.delete()
+    await callback.answer()
+
+@dp.message(Command("finance"))
+@dp.message(F.text == "💰 Финансы")
+async def cmd_finance(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Мои расходы", callback_data="fin_stats")],
+        [InlineKeyboardButton(text="➕ Добавить категорию", callback_data="fin_add_cat")],
+        [InlineKeyboardButton(text="❌ Удалить категорию", callback_data="fin_del_cat_menu")]
+    ])
+    await message.answer("💰 **Управление финансами**", reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query(F.data == "fin_stats")
+async def cb_fin_stats(callback: types.CallbackQuery):
+    await send_expense_chart(callback.message)
+    await callback.answer()
+
+@dp.callback_query(F.data == "fin_add_cat")
+async def cb_fin_add_cat(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer("✍️ Введите название новой категории:")
+    await state.set_state(SettingsStates.waiting_for_category)
+    await callback.answer()
+
+@dp.message(SettingsStates.waiting_for_category)
+async def process_new_category(message: types.Message, state: FSMContext):
+    cat_name = message.text.strip()
+    database.add_category(message.from_user.id, cat_name)
+    await message.answer(f"✅ Категория **{cat_name}** сохранена!", parse_mode="Markdown")
+    await state.clear()
+
+@dp.callback_query(F.data == "fin_del_cat_menu")
+async def cb_fin_del_cat_menu(callback: types.CallbackQuery):
+    await send_delete_categories_menu(callback.message)
     await callback.answer()
 
 # Daily Morning Brief
@@ -617,23 +646,38 @@ async def send_expense_chart(message: types.Message):
         text += f"\n💰 <b>Всего:</b> {total:.0f}₽"
         
         await message.answer(text, parse_mode="HTML")
-        
-    except Exception as e:
-        logging.error(f"Stats Error: {e}")
-        await message.answer("Не удалось получить статистику.")
+    await message.answer("Не удалось получить статистику.")
 
-async def get_weather(city_name: str):
+async def get_weather(lat=None, lon=None, city_name=None):
+    if not config.WEATHER_API_KEY:
+        return "Ключ погоды не настроен."
+    
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={config.WEATHER_API_KEY}&units=metric&lang=ru"
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "appid": config.WEATHER_API_KEY,
+            "units": "metric",
+            "lang": "ru"
+        }
+        
+        if lat and lon:
+            params["lat"] = lat
+            params["lon"] = lon
+        elif city_name:
+            params["q"] = city_name
+        else:
+            return "Не указана локация"
+
         async with httpx.AsyncClient() as client:
-            r = await client.get(url)
+            r = await client.get(url, params=params)
             data = r.json()
             if r.status_code != 200:
                 return f"Ошибка: {data.get('message', 'Неизвестная ошибка')}"
             
             temp = data['main']['temp']
             desc = data['weather'][0]['description']
-            return f"{temp}°C, {desc}"
+            place = data.get('name', 'Неизвестное место')
+            return f"{temp}°C, {desc} ({place})"
     except Exception as e:
         return f"Ошибка получения погоды: {e}"
 
@@ -653,10 +697,14 @@ async def send_morning_brief():
     currency = await get_currency()
     
     for user_id in users:
-        city = database.get_user_city(user_id)
-        weather = await get_weather(city)
+        loc = database.get_user_location(user_id)
+        if loc:
+            weather = await get_weather(lat=loc[0], lon=loc[1])
+        else:
+            city = database.get_user_city(user_id)
+            weather = await get_weather(city_name=city)
         
-        brief = f"☀️ Доброе утро! Вот твой утренний дайджест ({city}):\n"
+        brief = f"☀️ Доброе утро! Вот твой утренний дайджест:\n"
         brief += f"🌡 Погода: {weather}\n"
         brief += f"💵 Курс USD: {currency}\n"
         brief += "📅 Не забудь проверить свои дела на сегодня!"
@@ -666,11 +714,31 @@ async def send_morning_brief():
         except Exception as e:
             logging.error(f"Failed to send brief to {user_id}: {e}")
 
+@dp.message(F.location)
+async def handle_location(message: types.Message):
+    lat = message.location.latitude
+    lon = message.location.longitude
+    database.update_user_location(message.from_user.id, lat, lon)
+    
+    weather = await get_weather(lat=lat, lon=lon)
+    await message.answer(f"✅ Локация сохранена!\n🌡 Погода здесь: {weather}")
+
 @dp.message(F.text == "🌦 Погода")
 async def btn_weather(message: types.Message):
-    city = database.get_user_city(message.from_user.id)
-    weather = await get_weather(city)
-    await message.answer(f"🌡 Погода в {city}: {weather}")
+    loc = database.get_user_location(message.from_user.id)
+    if loc:
+        weather = await get_weather(lat=loc[0], lon=loc[1])
+        await message.answer(f"🌡 Текущая погода: {weather}")
+    else:
+        kb = ReplyKeyboardMarkup(keyboard=[
+            [KeyboardButton(text="📍 Отправить геопозицию", request_location=True)],
+            [KeyboardButton(text="Отмена")]
+        ], resize_keyboard=True, one_time_keyboard=True)
+        await message.answer("Я не знаю, где вы находитесь. Нажмите кнопку ниже, чтобы отправить координаты (или 'Отмена').", reply_markup=kb)
+
+@dp.message(F.text == "Отмена")
+async def cancel_action(message: types.Message):
+    await message.answer("Действие отменено.", reply_markup=get_main_menu())
 
 # To-Do List
 @dp.message(Command("todo"))

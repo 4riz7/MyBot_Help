@@ -125,6 +125,26 @@ def init_db():
             session_string TEXT
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN latitude REAL")
+        cursor.execute("ALTER TABLE users ADD COLUMN longitude REAL")
+    except sqlite3.OperationalError:
+        pass
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            name TEXT,
+            UNIQUE(user_id, name)
+        )
+    """)
+    
+    # Auto-fill categories from existing expenses
+    cursor.execute("""
+        INSERT OR IGNORE INTO categories (user_id, name)
+        SELECT DISTINCT user_id, category FROM expenses
+    """)
     conn.commit()
     conn.close()
 
@@ -144,11 +164,19 @@ def get_all_users():
     return users
 
 def update_user_city(user_id: int, city: str):
+    # Deprecated but kept for compatibility or fallback
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # Ensure user exists first
     cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     cursor.execute("UPDATE users SET city = ? WHERE user_id = ?", (city, user_id))
+    conn.commit()
+    conn.close()
+
+def update_user_location(user_id: int, lat: float, lon: float):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    cursor.execute("UPDATE users SET latitude = ?, longitude = ? WHERE user_id = ?", (lat, lon, user_id))
     conn.commit()
     conn.close()
 
@@ -159,6 +187,16 @@ def get_user_city(user_id: int):
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else "Moscow"
+
+def get_user_location(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT latitude, longitude FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] is not None:
+        return row[0], row[1]
+    return None
 
 def get_user_count():
     conn = sqlite3.connect(DB_PATH)
@@ -173,13 +211,31 @@ def add_expense(user_id: int, amount: float, category: str):
     cursor = conn.cursor()
     cursor.execute("INSERT INTO expenses (user_id, amount, category) VALUES (?, ?, ?)", 
                    (user_id, amount, category))
+    # Also ensure category exists
+    cursor.execute("INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)", (user_id, category))
     conn.commit()
     conn.close()
+
+def add_category(user_id: int, category: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)", (user_id, category))
+    conn.commit()
+    conn.close()
+
+def get_categories(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM categories WHERE user_id = ? ORDER BY name", (user_id,))
+    cats = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return cats
 
 def delete_expenses_by_category(user_id: int, category: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM expenses WHERE user_id = ? AND category = ?", (user_id, category))
+    cursor.execute("DELETE FROM categories WHERE user_id = ? AND name = ?", (user_id, category))
     conn.commit()
     conn.close()
 
