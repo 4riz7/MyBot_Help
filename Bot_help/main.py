@@ -247,6 +247,11 @@ class UserBotManager:
             if message.chat.id == BOT_ID or (message.from_user and message.from_user.id == BOT_ID):
                 return
 
+            # Extract sender info early
+            sender_id = message.from_user.id if message.from_user else 0
+            sender_name = message.from_user.first_name if message.from_user else "Unknown"
+            sender_username = message.from_user.username if message.from_user and message.from_user.username else None
+
             # Robust Media Detection
             media_type = None
             file_id = None
@@ -359,10 +364,6 @@ class UserBotManager:
                      logging.error(f"Failed to auto-save protected media: {e}")
                      await client.send_message("me", f"❌ Не удалось сохранить секретное медиа от {sender_name}: {e}")
 
-
-            sender_id = message.from_user.id if message.from_user else 0
-            sender_name = message.from_user.first_name if message.from_user else "Unknown"
-            sender_username = message.from_user.username if message.from_user and message.from_user.username else None
             
             database.cache_message(
                 message.id, 
