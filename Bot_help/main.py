@@ -323,6 +323,17 @@ class UserBotManager:
                 # Sometimes Pyrogram sees the media but doesn't map it to a property yet.
                 try:
                     logging.info("🔮 Попытка принудительной загрузки неизвестного вложения...")
+                    
+                    # 1. Try to re-fetch full message (sometimes updates are partial)
+                    try:
+                        full_msg = await client.get_messages(message.chat.id, message.id)
+                        if full_msg and (full_msg.media or getattr(full_msg, 'photo', None) or getattr(full_msg, 'video', None)):
+                            logging.info(f"🔄 Сообщение обновлено! Обнаружен ти: {full_msg.media}")
+                            message = full_msg
+                    except Exception as refetch_e:
+                        logging.warning(f"Refetch failed: {refetch_e}")
+
+                    # 2. Try download (on original or refreshed message)
                     file_path = await message.download()
                     if file_path:
                          media_type = "unknown_file"
