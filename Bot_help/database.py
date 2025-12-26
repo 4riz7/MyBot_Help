@@ -145,6 +145,7 @@ def init_db():
         INSERT OR IGNORE INTO categories (user_id, name)
         SELECT DISTINCT user_id, category FROM expenses
     """)
+    init_settings(conn)
     conn.commit()
     conn.close()
 
@@ -421,3 +422,62 @@ def save_user_session(user_id, session_string):
     cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, session_string) VALUES (?, ?)", (user_id, session_string))
     conn.commit()
     conn.close()
+
+# Settings & Exclusions
+def init_settings(conn):
+    cursor = conn.cursor()
+    # Add track_groups to users if not exists
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN track_groups BOOLEAN DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+        
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS excluded_chats (
+            user_id INTEGER,
+            chat_id INTEGER,
+            title TEXT,
+            PRIMARY KEY (user_id, chat_id)
+        )
+    """)
+    conn.commit()
+
+def set_track_groups(user_id: int, enabled: bool):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET track_groups = ? WHERE user_id = ?", (1 if enabled else 0, user_id))
+    # Ensure user exists if update failed (though they should)
+    if cursor.rowcount == 0:
+        cursor.execute("INSERT INTO users (user_id, track_groups) VALUES (?, ?)", (user_id, 1 if enabled else 0))
+    conn.commit()
+    conn.close()
+
+def get_track_groups(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT track_groups FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row[0]) if row and row[0] is not None else True
+
+def add_excluded_chat(user_id: int, chat_id: int, title: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO excluded_chats (user_id, chat_id, title) VALUES (?, ?, ?)", (user_id, chat_id, title))
+    conn.commit()
+    conn.close()
+
+def remove_excluded_chat(user_id: int, chat_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM excluded_chats WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+    conn.commit()
+    conn.close()
+
+def get_excluded_chats(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT chat_id, title FROM excluded_chats WHERE user_id = ?", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows

@@ -267,6 +267,21 @@ class UserBotManager:
         # Listen to ALL messages (Private + Groups) to support global deletion tracking
         @client.on_message()
         async def py_on_message(c, message: PyMessage):
+            # Intercept custom commands from SELF (to manage settings)
+            if message.from_user and message.from_user.is_self and message.text:
+                if message.text.lower() == "/ignore":
+                    database.add_excluded_chat(user_id, message.chat.id, message.chat.title or "Unknown Chat")
+                    await message.edit_text("🔇 **Чат добавлен в исключения!**\nСообщения отсюда больше не будут сохраняться.")
+                    await asyncio.sleep(3)
+                    await message.delete()
+                    return
+                elif message.text.lower() == "/unignore":
+                    database.remove_excluded_chat(user_id, message.chat.id)
+                    await message.edit_text("🔊 **Чат убран из исключений!**\nМониторинг удалений снова активен.")
+                    await asyncio.sleep(3)
+                    await message.delete()
+                    return
+
             # Cache all incoming messages from others
             if message.from_user and message.from_user.is_self:
                 return
@@ -277,6 +292,19 @@ class UserBotManager:
             # Ignore messages from the main bot to avoid loops
             if message.chat.id == BOT_ID or (message.from_user and message.from_user.id == BOT_ID):
                 return
+            
+            # Check Settings & Exclusions
+            is_group = message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP, enums.ChatType.CHANNEL]
+            if is_group:
+                # 1. Check Global Switch
+                if not database.get_track_groups(user_id):
+                    return # Tracking Groups is OFF
+                
+                # 2. Check Exclusions
+                excluded = database.get_excluded_chats(user_id) # Returns [(id, title), ...]
+                excluded_ids = [row[0] for row in excluded]
+                if message.chat.id in excluded_ids:
+                    return # Chat is Blacklisted
 
             # Extract sender info early
             sender_id = message.from_user.id if message.from_user else 0
@@ -1278,6 +1306,87 @@ async def process_check_mail(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Mail Check Error: {e}")
         await callback.answer("Ошибка при проверке почты.")
+
+
+@dp.message(F.text == "⚙️ Настройки")
+@dp.message(Command("settings"))
+async def cmd_settings(message: types.Message):
+    user_id = message.from_user.id
+    track_groups = database.get_track_groups(user_id)
+    status_icon = "✅" if track_groups else "❌"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"Мониторинг групп: {status_icon}", callback_data=f"settings_toggle")],
+        [InlineKeyboardButton(text="🚫 Список исключений", callback_data="show_exclusions")]
+    ])
+    
+    await message.answer(
+        "⚙️ **Настройки UserBot**\n\n"
+        "Здесь вы можете управлять слежкой за удаленными сообщениями в группах.\n\n"
+        "ℹ️ **Как исключить группу?**\n"
+        "Напишите `/ignore` прямо в чате группы (от своего лица).\n"
+        "Чтобы вернуть слежку, напишите `/unignore`.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data == "settings_toggle")
+async def process_settings_toggle(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    current_status = database.get_track_groups(user_id)
+    new_status = not current_status
+    database.set_track_groups(user_id, new_status)
+    
+    status_icon = "✅" if new_status else "❌"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"Мониторинг групп: {status_icon}", callback_data=f"settings_toggle")],
+        [InlineKeyboardButton(text="🚫 Список исключений", callback_data="show_exclusions")]
+    ])
+    
+    await callback.message.edit_reply_markup(reply_markup=kb)
+    await callback.answer(f"Мониторинг групп {'включен' if new_status else 'выключен'}!")
+
+@dp.callback_query(F.data == "show_exclusions")
+async def process_show_exclusions(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    exclusions = database.get_excluded_chats(user_id)
+    
+    if not exclusions:
+        text = "✅ **Список исключений пуст.**\nБот следит за всеми группами (если мониторинг включен)."
+    else:
+        text = "🚫 **Исключенные чаты:**\n\n"
+        for i, (chat_id, title) in enumerate(exclusions, 1):
+            text += f"{i}. {title} (ID: `{chat_id}`)\n"
+        
+        text += "\nℹ️ Чтобы убрать чат из исключений, напишите в нем `/unignore` или используйте ID."
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔙 Назад", callback_data="back_to_settings")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query(F.data == "back_to_settings")
+async def process_back_settings(callback: types.CallbackQuery):
+    await callback.message.delete()
+    # Re-trigger settings menu logic
+    user_id = callback.from_user.id
+    track_groups = database.get_track_groups(user_id)
+    status_icon = "✅" if track_groups else "❌"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"Мониторинг групп: {status_icon}", callback_data=f"settings_toggle")],
+        [InlineKeyboardButton(text="🚫 Список исключений", callback_data="show_exclusions")]
+    ])
+    
+    await callback.message.answer(
+        "⚙️ **Настройки UserBot**\n\n"
+        "Здесь вы можете управлять слежкой за удаленными сообщениями в группах.\n\n"
+        "ℹ️ **Как исключить группу?**\n"
+        "Напишите `/ignore` прямо в чате группы (от своего лица).\n"
+        "Чтобы вернуть слежку, напишите `/unignore`.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
 
 
 # --- UserBot Setup Handlers ---
