@@ -138,6 +138,8 @@ async def check_deleted_messages():
                     if not isinstance(current_messages, list):
                         current_messages = [current_messages]
                         
+                    # logging.info(f"🔍 Checking {len(current_messages)} messages in chat {chat_id}")
+                        
                     # Check statuses
                     for i, msg_obj in enumerate(current_messages):
                         original_msg_id = msg_ids[i]
@@ -1288,7 +1290,7 @@ async def main():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_morning_brief, "cron", hour=8, minute=0)
     # database.cleanup_old_messages removed as it is not implemented
-    scheduler.add_job(check_deleted_messages, "interval", seconds=30)
+    scheduler.add_job(check_deleted_messages, "interval", seconds=10)
     scheduler.add_job(check_habit_reminders, "cron", second=0) # Run every minute at 00 seconds
     scheduler.start()
     
