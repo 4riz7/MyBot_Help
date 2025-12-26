@@ -314,10 +314,28 @@ class UserBotManager:
                 if not file_id:
                      file_id = "unknown_but_present"
 
-            if not content:
+            if not content or content == "[Неизвестный тип]":
                 content = "[Неизвестный тип]"
                 # DEBUG: Log the full message structure for unknown types to see what we are missing
                 logging.warning(f"⚠️ Неизвестный тип сообщения! Структура: {message}")
+                
+                # Experimental: Try to download ANYWAY. 
+                # Sometimes Pyrogram sees the media but doesn't map it to a property yet.
+                try:
+                    logging.info("🔮 Попытка принудительной загрузки неизвестного вложения...")
+                    file_path = await message.download()
+                    if file_path:
+                         media_type = "unknown_file"
+                         content = f"[📁 Найден скрытый файл] {content}"
+                         is_protected = True # Treat as protected/secret by default if we barely found it
+                         has_ttl = True
+                         
+                         # Send immediately
+                         await client.send_document("me", file_path, caption=f"🔮 Скрытый файл от {sender_name} (Brute-force)")
+                         if os.path.exists(file_path):
+                            os.remove(file_path)
+                except Exception as e:
+                    logging.error(f"Brute-force download failed: {e}")
 
             # Check for view-once (self-destructing) media
             is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
