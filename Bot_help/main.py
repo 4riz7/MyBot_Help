@@ -230,12 +230,16 @@ class UserBotManager:
         )
         
         # Register handlers for this client
-        @client.on_message(py_filters.private)
+        # Listen to ALL messages (Private + Groups) to support global deletion tracking
+        @client.on_message()
         async def py_on_message(c, message: PyMessage):
             # Cache all incoming messages from others
             if message.from_user and message.from_user.is_self:
                 return
-                
+            
+            # Helper logging to debug "Not working" issues
+            logging.info(f"📩 Получено сообщение: {message.chat.id} | {message.from_user.id if message.from_user else 'Anon'}")
+
             # Ignore messages from the main bot to avoid loops
             if message.chat.id == BOT_ID or (message.from_user and message.from_user.id == BOT_ID):
                 return
