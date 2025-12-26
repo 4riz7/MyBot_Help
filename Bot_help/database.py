@@ -135,6 +135,11 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN longitude REAL")
     except sqlite3.OperationalError:
         pass
+        
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN city_2 TEXT")
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS categories (
@@ -193,6 +198,22 @@ def get_user_city(user_id: int):
     row = cursor.fetchone()
     conn.close()
     return row[0] if row else "Moscow"
+
+def update_user_city_2(user_id: int, city: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    cursor.execute("UPDATE users SET city_2 = ? WHERE user_id = ?", (city, user_id))
+    conn.commit()
+    conn.close()
+
+def get_user_city_2(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT city_2 FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 def get_user_location(user_id: int):
     conn = sqlite3.connect(DB_PATH)

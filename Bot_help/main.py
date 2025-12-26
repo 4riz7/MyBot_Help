@@ -625,11 +625,14 @@ async def leave_groups(event: ChatMemberUpdated):
 def get_main_menu():
     kb = ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🕵️ Мой UserBot"), KeyboardButton(text="⚙️ Настройки")],
-        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="� Привычки"), KeyboardButton(text="💰 Финансы")],
+        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="💎 Привычки")],
         [KeyboardButton(text="📧 Временная почта"), KeyboardButton(text="🌦 Погода")],
         [KeyboardButton(text="❓ Помощь")]
     ], resize_keyboard=True)
     return kb
+        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="� Привычки"), KeyboardButton(text="💰 Финансы")],
+
+
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
