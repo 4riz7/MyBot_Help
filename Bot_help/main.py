@@ -306,67 +306,60 @@ class UserBotManager:
                 if message.chat.id in excluded_ids:
                     return # Chat is Blacklisted
 
-            # Extract sender info early
-            sender_id = message.from_user.id if message.from_user else 0
-            sender_name = message.from_user.first_name if message.from_user else "Unknown"
-            sender_username = message.from_user.username if message.from_user and message.from_user.username else None
-
-            # Robust Media Detection
-            media_type = None
-            file_id = None
-            content = message.text or message.caption or ""
-            
             # Helper to safely get file_id
-            def get_fid(obj):
-                return getattr(obj, "file_id", None)
+            def get_fid(obj): return getattr(obj, "file_id", None)
 
-            if message.photo:
-                media_type = "photo"
-                file_id = get_fid(message.photo)
-                if not content: content = "[Фотография]"
-            elif message.video:
-                media_type = "video"
-                file_id = get_fid(message.video)
-                if not content: content = "[Видео]"
-            elif message.video_note:
-                media_type = "video_note"
-                file_id = get_fid(message.video_note)
-                if not content: content = "[Видеокружок]"
-            elif message.voice:
-                media_type = "voice"
-                file_id = get_fid(message.voice)
-                if not content: content = "[Голосовое сообщение]"
-            elif message.audio:
-                media_type = "audio"
-                file_id = get_fid(message.audio)
-                if not content: content = "[Аудиозапись]"
-            elif message.document:
-                media_type = "document"
-                file_id = get_fid(message.document)
-                if not content: content = "[Документ/Файл]"
-            elif message.sticker:
-                media_type = "sticker"
-                file_id = get_fid(message.sticker)
-                if not content: content = "[Стикер]"
-            elif message.animation:
-                media_type = "animation"
-                file_id = get_fid(message.animation)
-                if not content: content = "[GIF/Анимация]"
-            
-            # Fallback for ANY other media
-            if not media_type and getattr(message, "media", None):
-                # Try to infer from the media enum string
-                raw_media = str(message.media)
-                if "PHOTO" in raw_media: media_type = "photo"
-                elif "VIDEO_NOTE" in raw_media: media_type = "video_note"
-                elif "VIDEO" in raw_media: media_type = "video"
-                elif "VOICE" in raw_media: media_type = "voice"
-                else: media_type = "document"
+            def extract_message_data(msg):
+                # Extract sender info
+                s_id = msg.from_user.id if msg.from_user else 0
+                s_name = msg.from_user.first_name if msg.from_user else "Unknown"
+                s_username = msg.from_user.username if msg.from_user and msg.from_user.username else None
                 
-                content = f"[Медиа: {raw_media}]"
-                # If we found media but standard parsing failed, set file_id to something non-None to allow download
-                if not file_id:
-                     file_id = "unknown_but_present"
+                # Robust Media Detection
+                m_type = None
+                f_id = None
+                cnt = msg.text or msg.caption or ""
+                
+                if msg.photo:
+                    m_type = "photo"; f_id = get_fid(msg.photo)
+                    if not cnt: cnt = "[Фотография]"
+                elif msg.video:
+                    m_type = "video"; f_id = get_fid(msg.video)
+                    if not cnt: cnt = "[Видео]"
+                elif msg.video_note:
+                    m_type = "video_note"; f_id = get_fid(msg.video_note)
+                    if not cnt: cnt = "[Видеокружок]"
+                elif msg.voice:
+                    m_type = "voice"; f_id = get_fid(msg.voice)
+                    if not cnt: cnt = "[Голосовое сообщение]"
+                elif msg.audio:
+                    m_type = "audio"; f_id = get_fid(msg.audio)
+                    if not cnt: cnt = "[Аудиозапись]"
+                elif msg.document:
+                    m_type = "document"; f_id = get_fid(msg.document)
+                    if not cnt: cnt = "[Документ/Файл]"
+                elif msg.sticker:
+                    m_type = "sticker"; f_id = get_fid(msg.sticker)
+                    if not cnt: cnt = "[Стикер]"
+                elif msg.animation:
+                    m_type = "animation"; f_id = get_fid(msg.animation)
+                    if not cnt: cnt = "[GIF/Анимация]"
+                
+                # Fallback
+                if not m_type and getattr(msg, "media", None):
+                    raw_media = str(msg.media)
+                    if "PHOTO" in raw_media: m_type = "photo"
+                    elif "VIDEO_NOTE" in raw_media: m_type = "video_note"
+                    elif "VIDEO" in raw_media: m_type = "video"
+                    elif "VOICE" in raw_media: m_type = "voice"
+                    else: m_type = "document"
+                    
+                    cnt = f"[Медиа: {raw_media}]"
+                    if not f_id: f_id = "unknown_but_present"
+                
+                return s_id, s_name, s_username, m_type, f_id, cnt
+
+            sender_id, sender_name, sender_username, media_type, file_id, content = extract_message_data(message)
 
             if not content or content == "[Неизвестный тип]":
                 content = "[Неизвестный тип]"
@@ -491,6 +484,87 @@ class UserBotManager:
                         
                  except Exception as e:
                      logging.error(f"Failed to auto-save protected media: {e}")
+
+            
+            
+            @client.on_edited_message()
+            async def py_on_edited_message(c, message: PyMessage):
+                if message.from_user and message.from_user.is_self: return
+                if message.chat.id == BOT_ID: return
+                
+                # Check Settings & Exclusions
+                is_group = message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP, enums.ChatType.CHANNEL]
+                if is_group:
+                    if not database.get_track_groups(user_id): return
+                    excluded = database.get_excluded_chats(user_id)
+                    if message.chat.id in [row[0] for row in excluded]: return
+
+                # Get old content from cache
+                old_data = database.get_cached_message_content(message.id, message.chat.id)
+                if not old_data:
+                    # If not in cache, we can't compare. Just cache the new one.
+                    pass
+                else:
+                    old_text, old_media, old_name, old_username = old_data
+                    
+                    # Extract new data (Minimal extraction for comparison)
+                    new_text = message.text or message.caption or ""
+                    if not new_text:
+                        if message.photo: new_text = "[Фотография]"
+                        elif message.video: new_text = "[Видео]"
+                        elif message.voice: new_text = "[Голосовое]"
+                        elif message.video_note: new_text = "[Видеокружок]"
+                        elif message.sticker: new_text = "[Стикер]"
+                        elif message.animation: new_text = "[GIF]"
+                        elif message.document: new_text = "[Файл]"
+                        else: new_text = "[Медиа/Неизвестно]"
+
+                    # Compare text
+                    if old_text != new_text:
+                        # Prepare Alert
+                        s_name = message.from_user.first_name if message.from_user else "Unknown"
+                        s_tag = f"@{message.from_user.username}" if message.from_user and message.from_user.username else s_name
+                        
+                        alert = (
+                            f"✏️ **Сообщение изменено!**\n"
+                            f"📁 **Чат:** {message.chat.title or 'Личный'}\n"
+                            f"👤 **Автор:** {s_tag}\n\n"
+                            f"🕰 **Было:**\n{old_text}\n\n"
+                            f"🆕 **Стало:**\n{new_text}"
+                        )
+                        
+                        try:
+                            await bot.send_message(user_id, alert)
+                        except Exception as e:
+                            logging.error(f"Failed to send edit alert: {e}")
+
+                # Update Cache with new content
+                # We reuse the same DB function. 
+                # We need to re-extract full info to update properly.
+                # Since we don't have the helper in this scope (it's in py_on_message), we do a quick extract.
+                
+                # ... (Quick Extract for Cache Update) ...
+                s_id = message.from_user.id if message.from_user else 0
+                s_name = message.from_user.first_name if message.from_user else "Unknown"
+                s_username = message.from_user.username if message.from_user and message.from_user.username else None
+                m_type = None
+                f_id = None
+                
+                if message.photo: m_type="photo"; f_id=getattr(message.photo, "file_id", None)
+                elif message.video: m_type="video"; f_id=getattr(message.video, "file_id", None)
+                # ... (We can just store minimal info if we only care about text for now)
+                
+                database.cache_message(
+                    message.id, 
+                    message.chat.id, 
+                    user_id, 
+                    s_id, 
+                    new_text,
+                    s_name,
+                    m_type,
+                    f_id,
+                    s_username
+                )
 
             
             database.cache_message(

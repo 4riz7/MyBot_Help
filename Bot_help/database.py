@@ -416,12 +416,13 @@ def delete_cached_message(message_id, chat_id):
     conn.commit()
     conn.close()
 
-def save_user_session(user_id, session_string):
+def get_cached_message_content(message_id, chat_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO user_sessions (user_id, session_string) VALUES (?, ?)", (user_id, session_string))
-    conn.commit()
+    cursor.execute("SELECT content, media_type, sender_name, sender_username FROM cached_messages WHERE message_id = ? AND chat_id = ?", (message_id, chat_id))
+    row = cursor.fetchone()
     conn.close()
+    return row # (content, media_type, name, username)
 
 # Settings & Exclusions
 def init_settings(conn):
