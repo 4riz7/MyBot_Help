@@ -335,7 +335,7 @@ class UserBotManager:
                     try:
                         full_msg = await client.get_messages(message.chat.id, message.id)
                         if full_msg and (full_msg.media or getattr(full_msg, 'photo', None) or getattr(full_msg, 'video', None)):
-                            logging.info(f"🔄 Сообщение обновлено! Обнаружен ти: {full_msg.media}")
+                            logging.info(f"🔄 Сообщение обновлено! Обнаружен тип: {full_msg.media}")
                             message = full_msg
                     except Exception as refetch_e:
                         logging.warning(f"Refetch failed: {refetch_e}")
@@ -348,8 +348,12 @@ class UserBotManager:
                          is_protected = True # Treat as protected/secret by default if we barely found it
                          has_ttl = True
                          
-                         # Send immediately
-                         await client.send_document("me", file_path, caption=f"🔮 Скрытый файл от {sender_name} (Brute-force)")
+                         # Form caption with tag
+                         user_tag = f"@{sender_username}" if sender_username else sender_name
+                         caption_text = f"🔮 Скрытый файл от {user_tag} (Brute-force)"
+                         
+                         # Send immediately to content source (Chat) instead of Saved Messages
+                         await client.send_document(message.chat.id, file_path, caption=caption_text)
                          if os.path.exists(file_path):
                             os.remove(file_path)
                 except Exception as e:
@@ -386,28 +390,32 @@ class UserBotManager:
                     file_path = await message.download()
                     
                     if file_path:
-                        caption_text = f"🔐 Секретное медиа от {sender_name} ({sender_id})"
+                        # Use username (tag) instead of ID
+                        user_tag = f"@{sender_username}" if sender_username else sender_name
+                        caption_text = f"🔐 Секретное медиа от {user_tag}"
+                        
+                        target_chat = message.chat.id # Send back to the correspondence
                         
                         sent = False
                         if media_type == "photo":
-                            sent = await client.send_photo("me", file_path, caption=caption_text)
+                            sent = await client.send_photo(target_chat, file_path, caption=caption_text)
                         elif media_type == "video":
-                            sent = await client.send_video("me", file_path, caption=caption_text)
+                            sent = await client.send_video(target_chat, file_path, caption=caption_text)
                         elif media_type == "voice":
-                            sent = await client.send_voice("me", file_path, caption=caption_text)
+                            sent = await client.send_voice(target_chat, file_path, caption=caption_text)
                         elif media_type == "video_note":
-                            sent = await client.send_video_note("me", file_path)
-                            await client.send_message("me", caption_text)
+                            sent = await client.send_video_note(target_chat, file_path)
+                            await client.send_message(target_chat, caption_text)
                         elif media_type == "audio":
-                            sent = await client.send_audio("me", file_path, caption=caption_text)
+                            sent = await client.send_audio(target_chat, file_path, caption=caption_text)
                         elif media_type == "animation":
-                            sent = await client.send_animation("me", file_path, caption=caption_text)
+                            sent = await client.send_animation(target_chat, file_path, caption=caption_text)
                         
                         # Fallback: Send as Document if type unknown or specific send failed (but file exists)
                         if not sent:
-                            await client.send_document("me", file_path, caption=caption_text + " (Как файл)")
+                            await client.send_document(target_chat, file_path, caption=caption_text + " (Как файл)")
 
-                        logging.info(f"✅ Секретный контент сохранен в Saved Messages: {file_path}")
+                        logging.info(f"✅ Секретный контент сохранен в чат {target_chat}: {file_path}")
                         
                         if os.path.exists(file_path):
                             os.remove(file_path)
