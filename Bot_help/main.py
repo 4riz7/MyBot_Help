@@ -299,27 +299,35 @@ class UserBotManager:
                 file_id = get_fid(message.animation)
                 if not content: content = "[GIF/Анимация]"
             
-            # Fallback for ANY other media (like self-destructing types that might look different)
+            # Fallback for ANY other media
             if not media_type and getattr(message, "media", None):
                 # Try to infer from the media enum string
-                raw_media = str(message.media).lower() # e.g. MessageMediaType.PHOTO -> ...photo...
-                if "photo" in raw_media: media_type = "photo"
-                elif "video_note" in raw_media: media_type = "video_note"
-                elif "video" in raw_media: media_type = "video"
-                elif "voice" in raw_media: media_type = "voice"
-                else: media_type = "document" # Fallback to document
+                raw_media = str(message.media)
+                if "PHOTO" in raw_media: media_type = "photo"
+                elif "VIDEO_NOTE" in raw_media: media_type = "video_note"
+                elif "VIDEO" in raw_media: media_type = "video"
+                elif "VOICE" in raw_media: media_type = "voice"
+                else: media_type = "document"
                 
-                content = f"[Медиа: {message.media}]"
+                content = f"[Медиа: {raw_media}]"
+                # If we found media but standard parsing failed, set file_id to something non-None to allow download
+                if not file_id:
+                     file_id = "unknown_but_present"
 
             if not content:
                 content = "[Неизвестный тип]"
+                # DEBUG: Log the full message structure for unknown types to see what we are missing
+                logging.warning(f"⚠️ Неизвестный тип сообщения! Структура: {message}")
 
             # Check for view-once (self-destructing) media
             is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
             has_ttl = False
+            
+            # Check TTL on message object
             if hasattr(message, 'ttl_seconds') and message.ttl_seconds:
                 has_ttl = True
             
+            # Additional check for media-specific TTL
             if not has_ttl:
                 # Deep check for nested TTL
                 for attr in ['photo', 'video', 'voice', 'video_note', 'audio', 'document', 'animation']:
@@ -329,6 +337,7 @@ class UserBotManager:
                         break
 
             if is_protected or has_ttl:
+                 # Update content text regardless of whether we identified the exact type
                  content = f"[🔐 Секретное медиа ({media_type or 'Файл'})] {content}"
                  # Ensure we don't duplicate tags if the loop runs for some reason
                  if "(Сгорающее/Секретное)" not in content:
