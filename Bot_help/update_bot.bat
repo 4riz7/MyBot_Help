@@ -25,6 +25,11 @@ echo 👉 Pulling updates from git...
 git pull
 
 echo.
+echo 🔄 Updating libraries...
+pip uninstall -y pyrogram 2>nul
+pip install -r requirements.txt --upgrade
+
+echo.
 echo ------------------------------------------
 echo ✅ Update finished! 
 echo ------------------------------------------
