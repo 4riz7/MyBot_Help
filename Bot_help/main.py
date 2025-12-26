@@ -177,7 +177,7 @@ async def check_deleted_messages():
                                         # 2. Send via Main Bot
                                         sent_restored = None
                                         input_file = FSInputFile(media_path)
-                                        restored_caption = f"🗑 Восстановленное медиа от {sname}"
+                                        restored_caption = f"🗑 Восстановленное медиа от {sname}\n📁 Чат: {chat_label}"
                                         
                                         try:
                                             if mtype == "photo":
@@ -400,9 +400,9 @@ class UserBotManager:
                          is_protected = True 
                          has_ttl = True
                          
-                         # Form caption with tag
+                        # Form caption with tag
                          user_tag = f"@{sender_username}" if sender_username else sender_name
-                         caption_text = f"🔮 Скрытый файл от {user_tag} (Brute-force)"
+                         caption_text = f"🔮 Скрытый файл от {user_tag}\n📁 Чат: {message.chat.title or 'Личный'}"
                          
                          # Send via Main Bot to the User's private chat
                          try:
@@ -450,7 +450,7 @@ class UserBotManager:
                     if file_path:
                         # Use username (tag) instead of ID
                         user_tag = f"@{sender_username}" if sender_username else sender_name
-                        caption_text = f"🔐 Секретное медиа от {user_tag}"
+                        caption_text = f"🔐 Секретное медиа от {user_tag}\n📁 Чат: {message.chat.title or 'Личный'}"
                         
                         # Send via Main Bot to User
                         try:
