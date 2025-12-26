@@ -276,7 +276,8 @@ class UserBotManager:
                 content = "[Неизвестный тип]"
 
             # Check for view-once (self-destructing) media
-            if message.protected_content or (hasattr(message, 'ttl_seconds') and message.ttl_seconds):
+            is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
+            if is_protected or (hasattr(message, 'ttl_seconds') and message.ttl_seconds):
                  # Mark it in content or handle specifically if needed
                  content += " (View-Once/Secret)"
 
