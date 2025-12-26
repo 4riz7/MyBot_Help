@@ -263,10 +263,24 @@ def add_note(user_id: int, content: str):
 def get_notes(user_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT content FROM notes WHERE user_id = ?", (user_id,))
-    notes = [row[0] for row in cursor.fetchall()]
+    cursor.execute("SELECT id, content FROM notes WHERE user_id = ?", (user_id,))
+    notes = cursor.fetchall()
     conn.close()
     return notes
+
+def delete_note(note_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+    conn.commit()
+    conn.close()
+
+def clear_notes(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notes WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
 # To-Do List Functions
 def add_task(user_id: int, text: str):
     conn = sqlite3.connect(DB_PATH)

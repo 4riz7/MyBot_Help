@@ -797,6 +797,38 @@ async def cmd_note(message: types.Message, command: CommandObject):
     database.add_note(message.from_user.id, command.args)
     await message.answer("📝 Заметка сохранена!")
 
+@dp.message(Command("notes"))
+async def cmd_notes_list(message: types.Message):
+    notes = database.get_notes(message.from_user.id)
+    if not notes:
+        await message.answer("У тебя нет заметок. Добавь: /note текст")
+        return
+    
+    text = "📝 **Твои заметки:**\n\n"
+    kb = []
+    
+    for i, (nid, content) in enumerate(notes, 1):
+        preview = content[:30] + "..." if len(content) > 30 else content
+        text += f"{i}. {preview}\n"
+        kb.append([InlineKeyboardButton(text=f"🗑 Удалить #{i}", callback_data=f"del_note_{nid}")])
+    
+    kb.append([InlineKeyboardButton(text="🧹 Удалить все", callback_data="del_all_notes")])
+    
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+
+@dp.callback_query(F.data.startswith("del_note_"))
+async def process_note_delete(callback: types.CallbackQuery):
+    nid = int(callback.data.split("_")[2])
+    database.delete_note(nid)
+    await callback.answer("Заметка удалена!")
+    await callback.message.delete()
+
+@dp.callback_query(F.data == "del_all_notes")
+async def process_clear_notes(callback: types.CallbackQuery):
+    database.clear_notes(callback.from_user.id)
+    await callback.answer("Все заметки удалены!")
+    await callback.message.delete()
+
 @dp.message(F.text == "🧹 Очистить чат")
 @dp.message(Command("clear_ai"))
 async def cmd_clear_ai(message: types.Message):
