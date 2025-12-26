@@ -623,12 +623,11 @@ async def leave_groups(event: ChatMemberUpdated):
         logging.info(f"Left chat {event.chat.title} ({event.chat.id}) because I am not allowed in groups.")
 
 def get_main_menu():
-    # Only one button for the app
-    url = config.WEBAPP_URL if hasattr(config, 'WEBAPP_URL') else "https://google.com"
     kb = ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📱 Открыть меню", web_app=WebAppInfo(url=url))],
+        [KeyboardButton(text="🕵️ Мой UserBot"), KeyboardButton(text="⚙️ Настройки")],
+        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="� Привычки"), KeyboardButton(text="💰 Финансы")],
         [KeyboardButton(text="📧 Временная почта"), KeyboardButton(text="🌦 Погода")],
-        [KeyboardButton(text="💰 Финансы")]
+        [KeyboardButton(text="❓ Помощь")]
     ], resize_keyboard=True)
     return kb
 
@@ -637,11 +636,17 @@ async def cmd_start(message: types.Message, state: FSMContext):
     database.add_user(message.from_user.id)
     
     await message.answer(
-        f"Привет, {message.from_user.first_name}! 👋\n\n"
-        "Теперь все функции управления находятся в **Мини-приложении**.\n"
-        "Нажми кнопку ниже, чтобы управлять задачами, финансами и настройками.\n\n"
-        "💬 А здесь ты можешь просто общаться со мной или задавать вопросы ИИ.",
-        reply_markup=get_main_menu()
+        f"👋 **Привет, {message.from_user.first_name}!**\n\n"
+        "Я твой **Супер-Бот** — все инструменты в одном месте! 🚀\n\n"
+        "**Что я умею?**\n"
+        "🤖 **ИИ-ассистент:** Отвечаю на вопросы и помню контекст.\n"
+        "🕵️ **UserBot (Слежка):** Ловлю удаленные сообщения и секретные фото.\n"
+        "🎙 **Голос:** Превращаю голосовые в текст.\n"
+        "💼 **Органайзер:** Задачи, Привычки, Финансы, Заметки.\n"
+        "� **Утилиты:** Временная почта, Скачивание видео.\n\n"
+        "👇 **Выбирай функцию в меню ниже:**",
+        reply_markup=get_main_menu(),
+        parse_mode="Markdown"
     )
 
 
