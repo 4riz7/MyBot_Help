@@ -131,6 +131,7 @@ async def check_deleted_messages():
             for chat_id, messages_dict in chats_to_check.items():
                 msg_ids = list(messages_dict.keys())
                 try:
+                try:
                     # Batch request to Telegram
                     current_messages = await client.get_messages(chat_id, msg_ids)
                     
@@ -194,6 +195,11 @@ async def check_deleted_messages():
                             # We don't need to do anything, it stays in cache for next check.
                             pass
                             
+                except (ValueError, KeyError, IndexError) as e:
+                     # This happens if we try to check messages in a chat the bot hasn't "seen" in this session,
+                     # or if the peer ID is invalid. We just skip this chat for now.
+                     # logging.warning(f"Could not check messages in chat {chat_id}: {e}")
+                     pass
                 except Exception as e:
                     logging.debug(f"Error checking chat {chat_id}: {e}")
                     
@@ -324,7 +330,11 @@ class UserBotManager:
                         break
 
             if is_protected or has_ttl:
-                 content += " (Сгорающее/Секретное)"
+                 content = f"[🔐 Секретное медиа ({media_type or 'Файл'})] {content}"
+                 # Ensure we don't duplicate tags if the loop runs for some reason
+                 if "(Сгорающее/Секретное)" not in content:
+                    content += " (Сгорающее/Секретное)"
+                 
                  logging.info(f"🕵️ Обнаружен секретный контент от {sender_name}. Пробую сохранить...")
                  
                  try:
