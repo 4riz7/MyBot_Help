@@ -316,8 +316,15 @@ class UserBotManager:
 
             if not content or content == "[Неизвестный тип]":
                 content = "[Неизвестный тип]"
-                # DEBUG: Log the full message structure for unknown types to see what we are missing
-                logging.warning(f"⚠️ Неизвестный тип сообщения! Структура: {message}")
+                # DEBUG: Log the full message structure using vars() to see hidden fields
+                logging.warning(f"⚠️ Неизвестный тип сообщения! Внутренности: {vars(message)}")
+                try:
+                     import pyrogram
+                     logging.warning(f"Technical Info - Pyrogram Version: {pyrogram.__version__}")
+                     if hasattr(pyrogram.raw.all, 'layer'):
+                        logging.warning(f"Technical Info - API Layer: {pyrogram.raw.all.layer}")
+                except:
+                    pass
                 
                 # Experimental: Try to download ANYWAY. 
                 # Sometimes Pyrogram sees the media but doesn't map it to a property yet.
