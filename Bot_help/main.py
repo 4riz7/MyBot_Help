@@ -162,25 +162,51 @@ async def check_deleted_messages():
                             # Try to recover media if present
                             if mtype and fid:
                                 try:
-                                    # Send to Saved Messages (UserBot self)
-                                    if mtype == "photo":
-                                        await client.send_photo("me", fid, caption="🗑 Восстановленное фото")
-                                    elif mtype == "video":
-                                        await client.send_video("me", fid, caption="🗑 Восстановленное видео")
-                                    elif mtype == "voice":
-                                        await client.send_voice("me", fid, caption="🗑 Восстановленное голосовое")
-                                    elif mtype == "audio":
-                                        await client.send_audio("me", fid, caption="🗑 Восстановленное аудио")
-                                    elif mtype == "document":
-                                        await client.send_document("me", fid, caption="🗑 Восстановленный файл")
-                                    elif mtype == "sticker":
-                                        await client.send_sticker("me", fid)
-                                    elif mtype == "video_note":
-                                        await client.send_video_note("me", fid)
-                                    elif mtype == "animation":
-                                        await client.send_animation("me", fid, caption="🗑 Восстановленная GIF")
+                                    # New Logic: UserBot downloads -> Main Bot sends to User (Private Chat)
+                                    # This avoids "Saved Messages" and uses the Bot interface.
+                                    
+                                    # 1. Download via UserBot (since it has access to the file_id)
+                                    media_path = await client.download_media(fid)
+                                    
+                                    if media_path:
+                                        # 2. Send via Main Bot
+                                        sent_restored = None
+                                        input_file = FSInputFile(media_path)
+                                        restored_caption = f"🗑 Восстановленное медиа от {sname}"
                                         
-                                    alert_text += "\n💾 **Медиафайл сохранен в 'Избранное' (Saved Messages).**"
+                                        try:
+                                            if mtype == "photo":
+                                                sent_restored = await bot.send_photo(user_id, input_file, caption=restored_caption)
+                                            elif mtype == "video":
+                                                sent_restored = await bot.send_video(user_id, input_file, caption=restored_caption)
+                                            elif mtype == "voice":
+                                                sent_restored = await bot.send_voice(user_id, input_file, caption=restored_caption)
+                                            elif mtype == "audio":
+                                                sent_restored = await bot.send_audio(user_id, input_file, caption=restored_caption)
+                                            elif mtype == "video_note":
+                                                sent_restored = await bot.send_video_note(user_id, input_file)
+                                                await bot.send_message(user_id, restored_caption)
+                                            elif mtype == "animation":
+                                                sent_restored = await bot.send_animation(user_id, input_file, caption=restored_caption)
+                                            elif mtype == "sticker":
+                                                 # Stickers are tricky to download/send as files sometimes, but let's try
+                                                 sent_restored = await bot.send_sticker(user_id, input_file)
+                                            
+                                            # Fallback
+                                            if not sent_restored:
+                                                 await bot.send_document(user_id, input_file, caption=restored_caption + " (Как файл)")
+                                            
+                                            alert_text += "\n💾 **Медиафайл восстановлен ботом.**"
+                                        except Exception as bot_e:
+                                            logging.error(f"Restoration send failed: {bot_e}")
+                                            alert_text += f"\n❌ Бот не смог отправить файл: {bot_e}"
+                                        
+                                        # 3. Cleanup
+                                        if os.path.exists(media_path):
+                                            os.remove(media_path)
+                                    else:
+                                        alert_text += "\n❌ Не удалось скачать файл (доступ запрещен или устарел)."
+
                                 except Exception as e:
                                     alert_text += f"\n❌ Не удалось восстановить медиа: {e}"
 
