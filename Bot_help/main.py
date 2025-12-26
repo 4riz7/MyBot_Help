@@ -158,10 +158,10 @@ async def check_deleted_messages():
                             username_text = f"(@{s_username})" if s_username else ""
                             chat_label = chat_title or "Личный чат"
                             alert_text = (
-                                f"🗑 **Удаленное сообщение!**\n"
-                                f"📁 **Чат:** {chat_label}\n"
-                                f"👤 **От:** {sname} {username_text}\n"
-                                f"💬 **Текст:** {content}\n"
+                                f"🗑 Удаленное сообщение!\n"
+                                f"📁 Чат: {chat_label}\n"
+                                f"👤 От: {sname} {username_text}\n"
+                                f"💬 Текст: {content}\n"
                             )
                             
                             # Try to recover media if present
@@ -534,11 +534,11 @@ class UserBotManager:
                         s_tag = f"@{message.from_user.username}" if message.from_user and message.from_user.username else s_name
                         
                         alert = (
-                            f"✏️ **Сообщение изменено!**\n"
-                            f"📁 **Чат:** {message.chat.title or 'Личный'}\n"
-                            f"👤 **Автор:** {s_tag}\n\n"
-                            f"🕰 **Было:**\n{old_text}\n\n"
-                            f"🆕 **Стало:**\n{new_text}"
+                            f"✏️ Сообщение изменено!\n"
+                            f"📁 Чат: {message.chat.title or 'Личный'}\n"
+                            f"👤 Автор: {s_tag}\n\n"
+                            f"🕰 Было:\n{old_text}\n\n"
+                            f"🆕 Стало:\n{new_text}"
                         )
                         
                         try:
