@@ -1314,7 +1314,7 @@ async def main():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_morning_brief, "cron", hour=8, minute=0)
     # database.cleanup_old_messages removed as it is not implemented
-    scheduler.add_job(check_deleted_messages, "interval", seconds=10)
+    scheduler.add_job(check_deleted_messages, "interval", seconds=60, max_instances=2)
     scheduler.add_job(check_habit_reminders, "cron", second=0) # Run every minute at 00 seconds
     scheduler.start()
     
