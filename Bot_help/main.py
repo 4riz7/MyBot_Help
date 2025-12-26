@@ -630,7 +630,6 @@ def get_main_menu():
         [KeyboardButton(text="❓ Помощь")]
     ], resize_keyboard=True)
     return kb
-        [KeyboardButton(text="📋 Задачи"), KeyboardButton(text="� Привычки"), KeyboardButton(text="💰 Финансы")],
 
 
 
