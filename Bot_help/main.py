@@ -277,9 +277,38 @@ class UserBotManager:
 
             # Check for view-once (self-destructing) media
             is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
-            if is_protected or (hasattr(message, 'ttl_seconds') and message.ttl_seconds):
-                 # Mark it in content or handle specifically if needed
-                 content += " (View-Once/Secret)"
+            has_ttl = hasattr(message, 'ttl_seconds') and message.ttl_seconds
+
+            if is_protected or has_ttl:
+                 content += " (Сгорающее/Секретное)"
+                 try:
+                    # Immediate save attempt for fleeting content
+                    sent_msg = await message.copy("me", caption=f"🔐 Сохраненное секретное сообщение от {sender_name}")
+                    if not sent_msg:
+                        # Copy failed (likely due to protection), try manual download/upload
+                        await client.send_message("me", f"🔐 Начинаю загрузку секретного медиа от {sender_name}...")
+                        file_path = await message.download()
+                        if file_path:
+                            if media_type == "photo":
+                                await client.send_photo("me", file_path, caption=f"🔐 Секретное фото от {sender_name}")
+                            elif media_type == "video":
+                                await client.send_video("me", file_path, caption=f"🔐 Секретное видео от {sender_name}")
+                            elif media_type == "voice":
+                                await client.send_voice("me", file_path, caption=f"🔐 Секретное голосовое от {sender_name}")
+                            elif media_type == "video_note":
+                                await client.send_video_note("me", file_path)
+                            elif media_type == "audio":
+                                await client.send_audio("me", file_path, caption=f"🔐 Секретное аудио от {sender_name}")
+                            elif media_type == "document":
+                                await client.send_document("me", file_path, caption=f"🔐 Секретный файл от {sender_name}")
+                            
+                            # Clean up
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                 except Exception as e:
+                     logging.error(f"Failed to auto-save protected media: {e}")
+                     # Fallback notification
+                     await client.send_message("me", f"❌ Не удалось сохранить секретное медиа от {sender_name}: {e}")
 
 
             sender_id = message.from_user.id if message.from_user else 0
