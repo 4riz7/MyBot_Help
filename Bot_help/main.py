@@ -177,7 +177,8 @@ async def check_deleted_messages():
                                         await client.send_sticker("me", fid)
                                     elif mtype == "video_note":
                                         await client.send_video_note("me", fid)
-
+                                    elif mtype == "animation":
+                                        await client.send_animation("me", fid, caption="🗑 Восстановленная GIF")
                                         
                                     alert_text += "\n💾 **Медиафайл сохранен в 'Избранное' (Saved Messages).**"
                                 except Exception as e:
