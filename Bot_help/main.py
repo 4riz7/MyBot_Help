@@ -504,28 +504,31 @@ class UserBotManager:
                     excluded = database.get_excluded_chats(user_id)
                     if message.chat.id in [row[0] for row in excluded]: return
 
-                # Get old content from cache
-                old_data = database.get_cached_message_content(message.id, message.chat.id)
-                if not old_data:
-                    # If not in cache, we can't compare. Just cache the new one.
-                    pass
-                else:
-                    old_text, old_media, old_name, old_username = old_data
-                    
-                    # Extract new data (Minimal extraction for comparison)
-                    new_text = message.text or message.caption or ""
-                    if not new_text:
-                        if message.photo: new_text = "[Фотография]"
-                        elif message.video: new_text = "[Видео]"
-                        elif message.voice: new_text = "[Голосовое]"
-                        elif message.video_note: new_text = "[Видеокружок]"
-                        elif message.sticker: new_text = "[Стикер]"
-                        elif message.animation: new_text = "[GIF]"
-                        elif message.document: new_text = "[Файл]"
-                        else: new_text = "[Медиа/Неизвестно]"
+                # 1. Always extract new data first (needed for cache update)
+                new_text = message.text or message.caption or ""
+                if not new_text:
+                    if message.photo: new_text = "[Фотография]"
+                    elif message.video: new_text = "[Видео]"
+                    elif message.voice: new_text = "[Голосовое]"
+                    elif message.video_note: new_text = "[Видеокружок]"
+                    elif message.sticker: new_text = "[Стикер]"
+                    elif message.animation: new_text = "[GIF]"
+                    elif message.document: new_text = "[Файл]"
+                    else: new_text = "[Медиа/Неизвестно]"
 
+                # 2. Get old content from cache
+                old_data = database.get_cached_message_content(message.id, message.chat.id)
+                
+                if old_data:
+                    # Unpack safely
+                    old_text, old_media, old_name, old_username = "", "", "", ""
+                    if len(old_data) == 5:
+                        old_text, old_media, old_name, old_username, old_title = old_data
+                    elif len(old_data) == 4:
+                        old_text, old_media, old_name, old_username = old_data
+                    
                     # Compare text
-                    if old_text != new_text:
+                    if old_text and old_text != new_text:
                         # Prepare Alert
                         s_name = message.from_user.first_name if message.from_user else "Unknown"
                         s_tag = f"@{message.from_user.username}" if message.from_user and message.from_user.username else s_name
@@ -543,12 +546,7 @@ class UserBotManager:
                         except Exception as e:
                             logging.error(f"Failed to send edit alert: {e}")
 
-                # Update Cache with new content
-                # We reuse the same DB function. 
-                # We need to re-extract full info to update properly.
-                # Since we don't have the helper in this scope (it's in py_on_message), we do a quick extract.
-                
-                # ... (Quick Extract for Cache Update) ...
+                # 3. Update Cache with new content
                 s_id = message.from_user.id if message.from_user else 0
                 s_name = message.from_user.first_name if message.from_user else "Unknown"
                 s_username = message.from_user.username if message.from_user and message.from_user.username else None
@@ -557,7 +555,6 @@ class UserBotManager:
                 
                 if message.photo: m_type="photo"; f_id=getattr(message.photo, "file_id", None)
                 elif message.video: m_type="video"; f_id=getattr(message.video, "file_id", None)
-                # ... (We can just store minimal info if we only care about text for now)
                 
                 database.cache_message(
                     message.id, 
