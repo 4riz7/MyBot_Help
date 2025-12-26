@@ -282,35 +282,59 @@ class UserBotManager:
                 content = "[Неизвестный тип]"
 
             # Check for view-once (self-destructing) media
+            # Note: View Once usually has ttl_seconds, and protected_content=True
             is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
-            has_ttl = hasattr(message, 'ttl_seconds') and message.ttl_seconds
+            has_ttl = False
+            if hasattr(message, 'ttl_seconds') and message.ttl_seconds:
+                has_ttl = True
+            
+            # Additional check for media-specific TTL (sometimes it's nested)
+            if not has_ttl:
+                if message.photo and hasattr(message.photo, 'ttl_seconds') and message.photo.ttl_seconds: has_ttl = True
+                elif message.video and hasattr(message.video, 'ttl_seconds') and message.video.ttl_seconds: has_ttl = True
+                elif message.voice and hasattr(message.voice, 'ttl_seconds') and message.voice.ttl_seconds: has_ttl = True
+                elif message.video_note and hasattr(message.video_note, 'ttl_seconds') and message.video_note.ttl_seconds: has_ttl = True
 
             if is_protected or has_ttl:
                  content += " (Сгорающее/Секретное)"
+                 logging.info(f"🕵️ Обнаружен секретный контент от {sender_name}. Пробую сохранить...")
+                 
                  try:
-                    # Immediate save attempt for fleeting content
-                    sent_msg = await message.copy("me", caption=f"🔐 Сохраненное секретное сообщение от {sender_name}")
-                    if not sent_msg:
-                        # Copy failed (likely due to protection), try manual download/upload
-                        await client.send_message("me", f"🔐 Начинаю загрузку секретного медиа от {sender_name}...")
-                        file_path = await message.download()
-                        if file_path:
-                            if media_type == "photo":
-                                await client.send_photo("me", file_path, caption=f"🔐 Секретное фото от {sender_name}")
-                            elif media_type == "video":
-                                await client.send_video("me", file_path, caption=f"🔐 Секретное видео от {sender_name}")
-                            elif media_type == "voice":
-                                await client.send_voice("me", file_path, caption=f"🔐 Секретное голосовое от {sender_name}")
-                            elif media_type == "video_note":
-                                await client.send_video_note("me", file_path)
-                            elif media_type == "audio":
-                                await client.send_audio("me", file_path, caption=f"🔐 Секретное аудио от {sender_name}")
-                            elif media_type == "document":
-                                await client.send_document("me", file_path, caption=f"🔐 Секретный файл от {sender_name}")
-                            
-                            # Clean up
-                            if os.path.exists(file_path):
-                                os.remove(file_path)
+                    # Skip copy() because it preserves self-destruct timer!
+                    # We must download and re-upload as fresh media.
+                    
+                    await client.send_message("me", f"🔐 Начинаю загрузку секретного медиа от {sender_name}...")
+                    
+                    # Download to memory or file
+                    file_path = await message.download()
+                    
+                    if file_path:
+                        caption_text = f"🔐 Секретное медиа от {sender_name} ({sender_id})"
+                        
+                        if media_type == "photo":
+                            await client.send_photo("me", file_path, caption=caption_text)
+                        elif media_type == "video":
+                            await client.send_video("me", file_path, caption=caption_text)
+                        elif media_type == "voice":
+                            await client.send_voice("me", file_path, caption=caption_text)
+                        elif media_type == "video_note":
+                            await client.send_video_note("me", file_path) # Video notes usually don't have captions
+                            await client.send_message("me", caption_text)
+                        elif media_type == "audio":
+                            await client.send_audio("me", file_path, caption=caption_text)
+                        elif media_type == "document":
+                            await client.send_document("me", file_path, caption=caption_text)
+                        elif media_type == "sticker":
+                             await client.send_sticker("me", file_path)
+                        
+                        logging.info(f"✅ Секретный контент сохранен в Saved Messages: {file_path}")
+                        
+                        # Clean up
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                    else:
+                        logging.error("❌ Download failed (file_path is None)")
+                        
                  except Exception as e:
                      logging.error(f"Failed to auto-save protected media: {e}")
                      # Fallback notification
