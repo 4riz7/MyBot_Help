@@ -246,90 +246,109 @@ class UserBotManager:
             if message.chat.id == BOT_ID or (message.from_user and message.from_user.id == BOT_ID):
                 return
 
+            # Robust Media Detection
             media_type = None
             file_id = None
             content = message.text or message.caption or ""
             
+            # Helper to safely get file_id
+            def get_fid(obj):
+                return getattr(obj, "file_id", None)
+
             if message.photo:
                 media_type = "photo"
-                file_id = message.photo.file_id
+                file_id = get_fid(message.photo)
                 if not content: content = "[Фотография]"
             elif message.video:
                 media_type = "video"
-                file_id = message.video.file_id
+                file_id = get_fid(message.video)
                 if not content: content = "[Видео]"
             elif message.video_note:
                 media_type = "video_note"
-                file_id = message.video_note.file_id
+                file_id = get_fid(message.video_note)
                 if not content: content = "[Видеокружок]"
             elif message.voice:
                 media_type = "voice"
-                file_id = message.voice.file_id
+                file_id = get_fid(message.voice)
                 if not content: content = "[Голосовое сообщение]"
             elif message.audio:
                 media_type = "audio"
-                file_id = message.audio.file_id
+                file_id = get_fid(message.audio)
                 if not content: content = "[Аудиозапись]"
             elif message.document:
                 media_type = "document"
-                file_id = message.document.file_id
+                file_id = get_fid(message.document)
                 if not content: content = "[Документ/Файл]"
             elif message.sticker:
                 media_type = "sticker"
-                file_id = message.sticker.file_id
+                file_id = get_fid(message.sticker)
                 if not content: content = "[Стикер]"
-            elif not content:
+            elif message.animation:
+                media_type = "animation"
+                file_id = get_fid(message.animation)
+                if not content: content = "[GIF/Анимация]"
+            
+            # Fallback for ANY other media (like self-destructing types that might look different)
+            if not media_type and getattr(message, "media", None):
+                # Try to infer from the media enum string
+                raw_media = str(message.media).lower() # e.g. MessageMediaType.PHOTO -> ...photo...
+                if "photo" in raw_media: media_type = "photo"
+                elif "video_note" in raw_media: media_type = "video_note"
+                elif "video" in raw_media: media_type = "video"
+                elif "voice" in raw_media: media_type = "voice"
+                else: media_type = "document" # Fallback to document
+                
+                content = f"[Медиа: {message.media}]"
+
+            if not content:
                 content = "[Неизвестный тип]"
 
             # Check for view-once (self-destructing) media
-            # Note: View Once usually has ttl_seconds, and protected_content=True
             is_protected = getattr(message, "protected_content", False) or getattr(message, "has_protected_content", False)
             has_ttl = False
             if hasattr(message, 'ttl_seconds') and message.ttl_seconds:
                 has_ttl = True
             
-            # Additional check for media-specific TTL (sometimes it's nested)
             if not has_ttl:
-                if message.photo and hasattr(message.photo, 'ttl_seconds') and message.photo.ttl_seconds: has_ttl = True
-                elif message.video and hasattr(message.video, 'ttl_seconds') and message.video.ttl_seconds: has_ttl = True
-                elif message.voice and hasattr(message.voice, 'ttl_seconds') and message.voice.ttl_seconds: has_ttl = True
-                elif message.video_note and hasattr(message.video_note, 'ttl_seconds') and message.video_note.ttl_seconds: has_ttl = True
+                # Deep check for nested TTL
+                for attr in ['photo', 'video', 'voice', 'video_note', 'audio', 'document', 'animation']:
+                    obj = getattr(message, attr, None)
+                    if obj and hasattr(obj, 'ttl_seconds') and obj.ttl_seconds:
+                        has_ttl = True
+                        break
 
             if is_protected or has_ttl:
                  content += " (Сгорающее/Секретное)"
                  logging.info(f"🕵️ Обнаружен секретный контент от {sender_name}. Пробую сохранить...")
                  
                  try:
-                    # Skip copy() because it preserves self-destruct timer!
-                    # We must download and re-upload as fresh media.
-                    
                     await client.send_message("me", f"🔐 Начинаю загрузку секретного медиа от {sender_name}...")
-                    
-                    # Download to memory or file
                     file_path = await message.download()
                     
                     if file_path:
                         caption_text = f"🔐 Секретное медиа от {sender_name} ({sender_id})"
                         
+                        sent = False
                         if media_type == "photo":
-                            await client.send_photo("me", file_path, caption=caption_text)
+                            sent = await client.send_photo("me", file_path, caption=caption_text)
                         elif media_type == "video":
-                            await client.send_video("me", file_path, caption=caption_text)
+                            sent = await client.send_video("me", file_path, caption=caption_text)
                         elif media_type == "voice":
-                            await client.send_voice("me", file_path, caption=caption_text)
+                            sent = await client.send_voice("me", file_path, caption=caption_text)
                         elif media_type == "video_note":
-                            await client.send_video_note("me", file_path) # Video notes usually don't have captions
+                            sent = await client.send_video_note("me", file_path)
                             await client.send_message("me", caption_text)
                         elif media_type == "audio":
-                            await client.send_audio("me", file_path, caption=caption_text)
-                        elif media_type == "document":
-                            await client.send_document("me", file_path, caption=caption_text)
-                        elif media_type == "sticker":
-                             await client.send_sticker("me", file_path)
+                            sent = await client.send_audio("me", file_path, caption=caption_text)
+                        elif media_type == "animation":
+                            sent = await client.send_animation("me", file_path, caption=caption_text)
                         
+                        # Fallback: Send as Document if type unknown or specific send failed (but file exists)
+                        if not sent:
+                            await client.send_document("me", file_path, caption=caption_text + " (Как файл)")
+
                         logging.info(f"✅ Секретный контент сохранен в Saved Messages: {file_path}")
                         
-                        # Clean up
                         if os.path.exists(file_path):
                             os.remove(file_path)
                     else:
@@ -337,7 +356,6 @@ class UserBotManager:
                         
                  except Exception as e:
                      logging.error(f"Failed to auto-save protected media: {e}")
-                     # Fallback notification
                      await client.send_message("me", f"❌ Не удалось сохранить секретное медиа от {sender_name}: {e}")
 
 
