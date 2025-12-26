@@ -173,6 +173,9 @@ async def check_deleted_messages():
                                         await client.send_document("me", fid, caption="🗑 Восстановленный файл")
                                     elif mtype == "sticker":
                                         await client.send_sticker("me", fid)
+                                    elif mtype == "video_note":
+                                        await client.send_video_note("me", fid)
+
                                         
                                     alert_text += "\n💾 **Медиафайл сохранен в 'Избранное' (Saved Messages).**"
                                 except Exception as e:
@@ -249,6 +252,10 @@ class UserBotManager:
                 media_type = "video"
                 file_id = message.video.file_id
                 if not content: content = "[Видео]"
+            elif message.video_note:
+                media_type = "video_note"
+                file_id = message.video_note.file_id
+                if not content: content = "[Видеокружок]"
             elif message.voice:
                 media_type = "voice"
                 file_id = message.voice.file_id
@@ -267,6 +274,12 @@ class UserBotManager:
                 if not content: content = "[Стикер]"
             elif not content:
                 content = "[Неизвестный тип]"
+
+            # Check for view-once (self-destructing) media
+            if message.protected_content or (hasattr(message, 'ttl_seconds') and message.ttl_seconds):
+                 # Mark it in content or handle specifically if needed
+                 content += " (View-Once/Secret)"
+
 
             sender_id = message.from_user.id if message.from_user else 0
             sender_name = message.from_user.first_name if message.from_user else "Unknown"
