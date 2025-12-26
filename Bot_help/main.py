@@ -131,7 +131,6 @@ async def check_deleted_messages():
             for chat_id, messages_dict in chats_to_check.items():
                 msg_ids = list(messages_dict.keys())
                 try:
-                try:
                     # Batch request to Telegram
                     current_messages = await client.get_messages(chat_id, msg_ids)
                     
