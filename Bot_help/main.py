@@ -345,15 +345,21 @@ class UserBotManager:
                     if file_path:
                          media_type = "unknown_file"
                          content = f"[📁 Найден скрытый файл] {content}"
-                         is_protected = True # Treat as protected/secret by default if we barely found it
+                         is_protected = True 
                          has_ttl = True
                          
                          # Form caption with tag
                          user_tag = f"@{sender_username}" if sender_username else sender_name
                          caption_text = f"🔮 Скрытый файл от {user_tag} (Brute-force)"
                          
-                         # Send immediately to content source (Chat) instead of Saved Messages
-                         await client.send_document(message.chat.id, file_path, caption=caption_text)
+                         # Send via Main Bot to the User's private chat
+                         try:
+                             input_file = FSInputFile(file_path)
+                             await bot.send_document(user_id, input_file, caption=caption_text)
+                         except Exception as bot_send_e:
+                             logging.error(f"Main Bot send error: {bot_send_e}")
+                             await client.send_message("me", f"❌ Бот не смог отправить файл в ЛС: {bot_send_e}")
+
                          if os.path.exists(file_path):
                             os.remove(file_path)
                 except Exception as e:
@@ -386,7 +392,7 @@ class UserBotManager:
                  logging.info(f"🕵️ Обнаружен секретный контент от {sender_name}. Пробую сохранить...")
                  
                  try:
-                    await client.send_message("me", f"🔐 Начинаю загрузку секретного медиа от {sender_name}...")
+                    await client.send_message("me", f"🔐 Загружаю секретное медиа от {sender_name}...")
                     file_path = await message.download()
                     
                     if file_path:
@@ -394,29 +400,36 @@ class UserBotManager:
                         user_tag = f"@{sender_username}" if sender_username else sender_name
                         caption_text = f"🔐 Секретное медиа от {user_tag}"
                         
-                        target_chat = message.chat.id # Send back to the correspondence
-                        
-                        sent = False
-                        if media_type == "photo":
-                            sent = await client.send_photo(target_chat, file_path, caption=caption_text)
-                        elif media_type == "video":
-                            sent = await client.send_video(target_chat, file_path, caption=caption_text)
-                        elif media_type == "voice":
-                            sent = await client.send_voice(target_chat, file_path, caption=caption_text)
-                        elif media_type == "video_note":
-                            sent = await client.send_video_note(target_chat, file_path)
-                            await client.send_message(target_chat, caption_text)
-                        elif media_type == "audio":
-                            sent = await client.send_audio(target_chat, file_path, caption=caption_text)
-                        elif media_type == "animation":
-                            sent = await client.send_animation(target_chat, file_path, caption=caption_text)
-                        
-                        # Fallback: Send as Document if type unknown or specific send failed (but file exists)
-                        if not sent:
-                            await client.send_document(target_chat, file_path, caption=caption_text + " (Как файл)")
+                        # Send via Main Bot to User
+                        try:
+                            input_file = FSInputFile(file_path)
+                            sent_msg = None
+                            
+                            if media_type == "photo":
+                                sent_msg = await bot.send_photo(user_id, input_file, caption=caption_text)
+                            elif media_type == "video":
+                                sent_msg = await bot.send_video(user_id, input_file, caption=caption_text)
+                            elif media_type == "voice":
+                                sent_msg = await bot.send_voice(user_id, input_file, caption=caption_text)
+                            elif media_type == "video_note":
+                                sent_msg = await bot.send_video_note(user_id, input_file)
+                                await bot.send_message(user_id, caption_text)
+                            elif media_type == "audio":
+                                sent_msg = await bot.send_audio(user_id, input_file, caption=caption_text)
+                            elif media_type == "animation":
+                                sent_msg = await bot.send_animation(user_id, input_file, caption=caption_text)
+                            
+                            # Fallback
+                            if not sent_msg:
+                                await bot.send_document(user_id, input_file, caption=caption_text + " (Как файл)")
+                            
+                            logging.info(f"✅ Секретный контент отправлен ботом пользователю {user_id}: {file_path}")
+                            
+                        except Exception as bot_err:
+                            logging.error(f"Bot send failed: {bot_err}")
+                            # Fallback to UserBot Saved Messages if Main Bot fails (e.g. file too big)
+                            await client.send_document("me", file_path, caption=caption_text + f"\n⚠️ (Бот не смог отправить: {bot_err})")
 
-                        logging.info(f"✅ Секретный контент сохранен в чат {target_chat}: {file_path}")
-                        
                         if os.path.exists(file_path):
                             os.remove(file_path)
                     else:
@@ -424,7 +437,6 @@ class UserBotManager:
                         
                  except Exception as e:
                      logging.error(f"Failed to auto-save protected media: {e}")
-                     await client.send_message("me", f"❌ Не удалось сохранить секретное медиа от {sender_name}: {e}")
 
             
             database.cache_message(
